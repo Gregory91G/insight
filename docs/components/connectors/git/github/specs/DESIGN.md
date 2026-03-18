@@ -27,6 +27,7 @@
   - [Identity Resolution Details](#identity-resolution-details)
   - [GitHub-Specific Considerations](#github-specific-considerations)
 - [5. Traceability](#5-traceability)
+- [6. Non-Applicability Statements](#6-non-applicability-statements)
 
 <!-- /toc -->
 
@@ -57,6 +58,8 @@ Fault tolerance is achieved through per-repository checkpointing and continue-on
 | `cpt-insightspec-fr-gh-collect-prs` | `GitHubConnector.collect_pull_requests()` via GraphQL bulk PR query (50/req); `order=UPDATED_AT DESC`; early exit on cursor |
 | `cpt-insightspec-fr-gh-collect-reviewers` | `FieldMapper.map_reviewer()` from `pr_node['reviews']['nodes']`; stores all 4 GitHub states (`APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED`) |
 | `cpt-insightspec-fr-gh-collect-comments` | `FieldMapper.map_comment()` from `pr_node['comments']` (general) + `pr_node['reviewThreads']` (inline) |
+| `cpt-insightspec-fr-gh-collect-repo-ext` | `FieldMapper.map_repo_ext(api_data, owner, repo)` writes GitHub-specific EAV rows (stars, forks, watchers, open issues, fork status, archive status, default branch) to `git_repositories_ext` alongside each `git_repositories` upsert |
+| `cpt-insightspec-fr-gh-history-depth` | `GitHubConnectorConfig.history_since_date` parameter; when set, passed as `since` to all GraphQL commit queries on the first full run — no commits older than this date are fetched |
 | `cpt-insightspec-fr-gh-commit-files-ext` | `git_commits_files_ext` Silver table provisioned per README; populated by AI/ScanCode enrichment pipelines post-collection |
 | `cpt-insightspec-fr-gh-identity-resolution` | `IdentityResolver` called per author/reviewer; email-first, `author_login` fallback, numeric `databaseId` last resort |
 | `cpt-insightspec-fr-gh-incremental-cursors` | `IncrementalCursorManager` reads/writes `git_repository_branches` + `git_pull_requests` cursors |
@@ -184,6 +187,8 @@ The connector targets the GitHub.com public API (`api.github.com`). GitHub Enter
 
 The Bronze-layer `github_graphql_cache` table is the only GitHub-specific table. All analytics data lives in the shared `git_*` Silver schema. This constraint ensures cross-platform Gold-layer queries require no source-specific table joins.
 
+`git_pull_requests_ext` cycle-time and review-metric properties are computed by the Gold-layer analytics pipeline, not this connector. `git_commits_ext` is populated by separate AI/analysis pipelines post-collection.
+
 #### Rate Limit Budget
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-gh-rate-limit`
@@ -232,11 +237,12 @@ Orchestrates the full collection pipeline: iterates organizations → repositori
 ##### Responsibility scope
 
 - Entry point for all collection runs (full and incremental).
+- When `config.history_since_date` is set, passes it as the `since` argument to all GraphQL commit queries during the first full run; subsequent incremental runs are unaffected.
 - Calls `GraphQLApiClient` for bulk commit and PR queries; calls `RestApiClient` for repo/branch discovery and commit file stats.
 - Calls `FieldMapper` to transform each API response node to a Silver schema row.
 - Calls `IdentityResolver` per author/reviewer before writing.
 - Calls `IncrementalCursorManager` to read/write cursors.
-- Writes all rows to Silver tables via the configured DB adapter.
+- Writes all rows to Silver tables via the configured DB adapter, including `git_pull_requests_commits` junction rows (fetched via `GET /repos/{owner}/{repo}/pulls/{number}/commits`) and `git_tickets` rows (derived from `FieldMapper.extract_ticket_references()` on PR title/body and commit messages).
 - Records start/end/status/counts in `git_collection_runs`.
 - Checkpoints progress after each repository.
 
@@ -319,11 +325,14 @@ Translates GitHub API response nodes (camelCase GraphQL or REST JSON) to unified
 ##### Responsibility scope
 
 - `map_repo(api_data, owner)` → `git_repositories` row
+- `map_repo_ext(api_data, owner, repo)` → list of `git_repositories_ext` EAV rows (`stars_count`, `forks_count`, `watchers_count`, `open_issues_count`, `is_fork`, `is_archived`, `default_branch`)
 - `map_commit(commit_node, owner, repo, branch)` → `git_commits` row
-- `map_commit_file(file_data, owner, repo, commit_hash)` → `git_commit_files` row
+- `map_commit_file(file_data, owner, repo, commit_hash)` → `git_commit_files` row (`file_path`, `file_extension`, `change_type`: added/modified/removed/renamed, `lines_added`, `lines_removed`)
 - `map_pull_request(pr_node, owner, repo)` → `git_pull_requests` row
-- `map_reviewer(review_node, owner, repo, pr_id)` → `git_pull_requests_reviewers` row
+- `map_reviewer(review_node, owner, repo, pr_id)` → `git_pull_requests_reviewers` row; reviews with `state = 'PENDING'` are skipped (draft reviews not yet formally submitted — see OQ-GH-3 in PRD)
 - `map_comment(comment_node, owner, repo, pr_id, inline=False)` → `git_pull_requests_comments` row
+- `map_pr_commit(commit_sha, owner, repo, pr_id)` → `git_pull_requests_commits` row (links PR to its constituent commits via `GET /repos/{owner}/{repo}/pulls/{number}/commits`)
+- `map_ticket(ticket_key, owner, repo, pr_id)` → `git_tickets` row
 - `normalize_state(pr_node)` → `'MERGED'` / `'CLOSED'` / `'OPEN'`
 - `extract_ticket_references(title, body, messages)` → list of ticket keys
 - Injects `data_source = "insight_github"` and `_version` on all rows
@@ -435,7 +444,7 @@ class GitHubConnector:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `auth_type` | `'pat'` / `'github_app'` | Authentication method |
+| `auth_type` | `'pat'` / `'github_app'` / `'oauth'` | Authentication method (`'oauth'` tokens are treated identically to PATs at the HTTP header level) |
 | `token` | str | PAT value or GitHub App installation token |
 | `organizations` | list[str] or None | Organization logins to collect; None = all accessible |
 | `page_size_rest` | int | REST API page size (default 100, max 100) |
@@ -446,6 +455,7 @@ class GitHubConnector:
 | `rate_limit_threshold` | int | Proactive backoff when GraphQL remaining < this (default 200) |
 | `enable_graphql_cache` | bool | Enable `github_graphql_cache` Bronze table (default False) |
 | `cache_ttl_seconds` | dict | Per-category TTL: `{repos: 86400, commits: 3600, prs: 900}` |
+| `history_since_date` | Optional[date] | When set, limits the first full collection run to commits authored on or after this date; subsequent incremental runs are unaffected (default None = no limit) |
 
 ---
 
@@ -880,6 +890,7 @@ for file_data in rest_commit['files']:
         'commit_hash': commit_hash,
         'file_path': file_data['filename'],
         'file_extension': extract_extension(file_data['filename']),
+        'change_type': file_data['status'],              # added / modified / removed / renamed
         'lines_added': file_data['additions'],
         'lines_removed': file_data['deletions'],
         # ai_thirdparty_flag, scancode_thirdparty_flag, scancode_metadata
@@ -952,6 +963,69 @@ for review in pr_node['reviews']['nodes']:
 **Draft PR**: `isDraft` field is stored in `metadata`; can be surfaced via `git_pull_requests_ext` if needed.
 
 **Email privacy**: Commits with no-reply addresses (`{id}+{login}@users.noreply.github.com`) are passed to `IdentityResolver` which detects the no-reply pattern and resolves via login fallback.
+
+---
+
+### PR Commit Mapping (REST) → `git_pull_requests_commits`
+
+For each PR, the connector calls `GET /repos/{owner}/{repo}/pulls/{number}/commits` and upserts one junction row per commit:
+
+```python
+for commit in rest_pr_commits:
+    {
+        'project_key': owner,
+        'repo_slug': repo,
+        'pr_id': pr_id,
+        'commit_hash': commit['sha'],
+        'data_source': 'insight_github',
+        '_version': int(time.time() * 1000)
+    }
+```
+
+This REST call uses the existing `RestApiClient.paginate_link()` loop. The junction rows are upserted keyed on `(project_key, repo_slug, pr_id, commit_hash, data_source)`.
+
+---
+
+### Repository Extension Mapping → `git_repositories_ext`
+
+After each `git_repositories` upsert, `FieldMapper.map_repo_ext()` produces one EAV row per property:
+
+```python
+ext_properties = [
+    {'property_key': 'stars_count',       'property_value': str(api_data['stargazers_count']), 'property_type': 'number'},
+    {'property_key': 'forks_count',       'property_value': str(api_data['forks_count']),      'property_type': 'number'},
+    {'property_key': 'watchers_count',    'property_value': str(api_data['watchers_count']),   'property_type': 'number'},
+    {'property_key': 'open_issues_count', 'property_value': str(api_data['open_issues_count']),'property_type': 'number'},
+    {'property_key': 'is_fork',           'property_value': str(int(api_data['fork'])),        'property_type': 'boolean'},
+    {'property_key': 'is_archived',       'property_value': str(int(api_data['archived'])),    'property_type': 'boolean'},
+    {'property_key': 'default_branch',    'property_value': api_data['default_branch'],        'property_type': 'string'},
+]
+for prop in ext_properties:
+    prop.update({'project_key': owner, 'repo_slug': repo,
+                 'data_source': 'insight_github', '_version': int(time.time() * 1000)})
+```
+
+Each row is upserted to `git_repositories_ext` keyed on `(project_key, repo_slug, property_key, data_source)`.
+
+---
+
+### Ticket Mapping → `git_tickets`
+
+`GitHubConnector` calls `FieldMapper.extract_ticket_references(title, body, commit_messages)` on each PR after mapping. For each returned ticket key, one row is upserted:
+
+```python
+for ticket_key in extract_ticket_references(pr_node['title'], pr_node.get('body', ''), []):
+    {
+        'project_key': owner,
+        'repo_slug': repo,
+        'pr_id': pr_id,
+        'ticket_key': ticket_key,
+        'data_source': 'insight_github',
+        '_version': int(time.time() * 1000)
+    }
+```
+
+Rows are upserted keyed on `(project_key, repo_slug, pr_id, ticket_key, data_source)`.
 
 ---
 
@@ -1056,3 +1130,30 @@ WHERE project_key = 'myorg' AND repo_slug = 'my-repo'
 - **Unified git schema**: [`docs/components/connectors/git/README.md`](../README.md)
 - **Legacy GitHub spec**: [`docs/components/connectors/git/github/github.md`](../github.md)
 - **Connectors architecture**: [`docs/architecture/CONNECTORS_ARCHITECTURE.md`](../../../../architecture/CONNECTORS_ARCHITECTURE.md)
+
+---
+
+## 6. Non-Applicability Statements
+
+The following DESIGN checklist domains are intentionally omitted from this document. Each entry explains why.
+
+| Domain | Disposition | Reason |
+|--------|-------------|--------|
+| PERF-DESIGN-002 — Scalability Architecture | Not applicable | This is a scheduled batch pull job. Horizontal/vertical scaling of the connector itself is owned by the scheduler infrastructure, not the connector design. |
+| SEC-DESIGN-003 — Data Protection (tokens at rest) | Deferred to deployment | Token storage, credential encryption, and Silver table data-at-rest encryption are controlled by the deployment platform (secret management system, DB encryption at rest). Not in connector scope. |
+| SEC-DESIGN-005 — Threat Modeling | Not applicable | Internal tool collecting code metadata from an organization's own repositories. Formal threat model deferred to the platform security team. |
+| REL-DESIGN-004 — Recovery Architecture | Not applicable | The connector owns no persistent state beyond Silver table rows. Silver table backup and restore are owned by the DB platform team. Connector-level recovery = re-run from cursor. |
+| DATA-DESIGN-003 — Data Governance | Not applicable | Data lineage, catalog integration, and master data management are owned by the Gold-layer platform team, not individual connectors. |
+| INT-DESIGN-003 — Event Architecture | Not applicable | Pull-only batch connector. No event bus, message broker, or pub/sub integration. |
+| INT-DESIGN-004 — API Versioning/Evolution | Not applicable | The connector targets a single stable external API (GitHub REST v3 / GraphQL v4). Internal API versioning is not applicable; GitHub API deprecation handling is a future operational concern. |
+| OPS-DESIGN-001 — Deployment Architecture | Not applicable | Deployment topology, container strategy, and environment promotion are owned by the platform infrastructure team. |
+| OPS-DESIGN-002 — Observability Architecture | Not applicable | Logging aggregation, distributed tracing, and alerting are owned by the platform infrastructure team. The connector emits structured logs and records run metadata in `git_collection_runs`; platform handles aggregation. |
+| OPS-DESIGN-003 — Infrastructure as Code | Not applicable | IaC is owned by the platform infrastructure team. |
+| OPS-DESIGN-004 — SLO / Observability Targets | Not applicable | SLIs/SLOs are defined at the platform level. Connector-level targets are expressed as PRD SMART goals (§1.3 of PRD.md). |
+| MAINT-DESIGN-002 — Technical Debt | Not applicable | New design; no known technical debt at time of writing. |
+| MAINT-DESIGN-003 — Documentation Strategy | Not applicable | Documentation strategy is owned by the platform-level PRD and engineering wiki. |
+| TEST-DESIGN-002 — Testing Strategy | Deferred to DECOMPOSITION | Unit, integration, and E2E test approach will be documented in the DECOMPOSITION artifact when implementation is planned. |
+| COMPL-DESIGN-001 — Compliance Architecture | Not applicable | The connector collects code metadata (commit messages, file names, line counts) from an internal GitHub organization. No PII, healthcare, or financial data is collected. |
+| COMPL-DESIGN-002 — Privacy Architecture | Not applicable | Code metadata only. GitHub email privacy handling is an identity resolution concern (see §4 Identity Resolution Details and OQ-GH-1 in PRD), not a compliance architecture concern. |
+| UX-DESIGN-001 — User-Facing Architecture | Not applicable | CLI and programmatic interface for platform engineers only. No end-user UX or accessibility requirements. |
+| ARCH-DESIGN-010 — Capacity and Cost Budgets | Not applicable | Capacity planning and cost estimation are owned by the platform-level PRD. Connector resource consumption is bounded by GitHub API rate limits (5,000 req/hr), which are documented in §2.2 and §3.5. |
