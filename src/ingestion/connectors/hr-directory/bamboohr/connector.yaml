@@ -13,12 +13,9 @@ definitions:
     url_base: "https://{{ config['domain'] }}.bamboohr.com/api/v1/"
     http_method: GET
     authenticator:
-      type: ApiKeyAuthenticator
-      api_token: "Basic {{ config['api_key'] }}"
-      inject_into:
-        type: RequestOption
-        field_name: Authorization
-        inject_into: header
+      type: BasicHttpAuthenticator
+      username: "{{ config['api_key'] }}"
+      password: "x"
     request_headers:
       Accept: "application/json"
     error_handler:
@@ -368,7 +365,7 @@ definitions:
       - type: AddFields
         fields:
           - path: ["unique"]
-            value: "{{ 'd' ~ record['id'] if record.get('deprecated', false) else record['id'] }}"
+            value: "{{ 'd' ~ record['id'] if record.get('deprecated', false) else record['id'] | string }}"
           - path: [tenant_id]
             value: "{{ config['tenant_id'] }}"
           - path: [_source]

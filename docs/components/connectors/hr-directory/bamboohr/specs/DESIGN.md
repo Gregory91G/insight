@@ -44,7 +44,7 @@ The BambooHR connector is an Airbyte declarative manifest connector (YAML, no cu
 2. **`leave_requests`** — time-off requests via `GET /time_off/requests` with fixed date range.
 3. **`meta_fields`** — field metadata (standard + custom field definitions) via `GET /meta/fields`.
 
-**Authentication**: API key injected as `Authorization: Basic {base64(key:x)}` header via `ApiKeyAuthenticator`.
+**Authentication**: API key injected as `Authorization: Basic {base64(key:x)}` header via `BasicHttpAuthenticator`.
 
 **Pagination**: None. BambooHR returns full datasets per request. The custom report and time-off endpoints are bounded by account size and date range respectively.
 
@@ -72,7 +72,7 @@ The BambooHR connector is an Airbyte declarative manifest connector (YAML, no cu
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|-------------|-----------------|----------------------|
 | `cpt-insightspec-nfr-bhr-auth-flexibility` | API key + company domain configurable | `spec.connection_specification` | `api_key` (secret) and `company_domain` in spec properties | Verify config fields present in spec |
-| `cpt-insightspec-nfr-bhr-rate-limit-compliance` | Honour BambooHR rate limits | `CompositeErrorHandler` | `WaitTimeFromHeader` on `Retry-After` for 429/503; `ExponentialBackoffStrategy` for 5XX | Simulate 503 with Retry-After; verify connector waits |
+| `cpt-insightspec-nfr-bhr-rate-limit-compliance` | Honour BambooHR rate limits | `CompositeErrorHandler` | `WaitTimeFromHeader` on `Retry-After` for 429/503 with `ExponentialBackoffStrategy` fallback; `ExponentialBackoffStrategy` for 5XX | Simulate 503 with Retry-After; verify connector waits |
 | `cpt-insightspec-nfr-bhr-schema-compliance` | Source-native field names at Bronze | `InlineSchemaLoader` | Schemas use BambooHR camelCase field names; no `KeysToSnakeCase` transformation | Compare schema fields to API response fields |
 | `cpt-insightspec-nfr-bhr-idempotent-writes` | Deterministic output for same cursor | Primary keys + cursor | Same `lastChanged` cursor produces same filtered record set | Run twice with same state; verify identical output |
 
@@ -81,7 +81,7 @@ The BambooHR connector is an Airbyte declarative manifest connector (YAML, no cu
 | Layer | Responsibility | Technology |
 |-------|---------------|------------|
 | Source API | BambooHR REST API v1 endpoints | REST / JSON |
-| Authentication | API key via Authorization header | `ApiKeyAuthenticator` |
+| Authentication | API key via Authorization header | `BasicHttpAuthenticator` |
 | Connector | Stream definitions, incremental sync, error handling | Airbyte declarative manifest (YAML) |
 | Execution | Container runtime | Airbyte Declarative Connector framework (CDK v6.44+) |
 | Bronze | Raw data storage with source-native schema | Destination connector (ClickHouse) |
@@ -178,9 +178,9 @@ None within this artifact. At runtime, the connector is executed by the Airbyte 
 
 **Base URL**: `https://{domain}.bamboohr.com/api/v1/`
 
-**Authentication**: API key via `ApiKeyAuthenticator`
-- Config value `api_key` is a pre-encoded base64 string of `{raw_key}:x`
-- Injected as `Authorization: Basic {api_key}` header
+**Authentication**: API key via `BasicHttpAuthenticator`
+- Config value `api_key` is the raw BambooHR API key (used as username; password is `x`)
+- `BasicHttpAuthenticator` base64-encodes `{api_key}:x` and injects as `Authorization: Basic {encoded}` header
 
 **Rate Limits**: Undocumented numeric limits. 503 with optional `Retry-After` header on throttling. 429 on account-level limits.
 
@@ -261,7 +261,7 @@ None within this artifact. At runtime, the connector is executed by the Airbyte 
     "api_key": {
       "type": "string",
       "title": "API Key",
-      "description": "BambooHR API key (base64-encoded as key:x)",
+      "description": "BambooHR API key (raw key — connector handles base64 encoding)",
       "airbyte_secret": true
     },
     "domain": {
