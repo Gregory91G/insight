@@ -101,6 +101,7 @@ The API uses Basic authentication with a team API key. Usage and daily-usage end
 | Usage Event | A single AI invocation in Cursor — one chat message, one tab completion, one agent step, etc. Each event records the model used, cost, and optional token breakdown. |
 | Daily Usage | One row per user per date, aggregating all AI activity (chat requests, composer requests, agent requests, tab completions, lines added/deleted, etc.). |
 | Billing Period | Cursor billing cycles start on the 27th of each month at 12:08:04 UTC. Usage events may be retroactively adjusted within the current billing period. |
+| Daily Data Cutoff | 12:08:04 UTC — the boundary at which Cursor finalizes the previous day's usage data. The daily resync stream (`cursor_usage_events_daily_resync`) uses this time as its window boundary: yesterday 12:08:04 UTC → today 12:08:04 UTC. The `connector.yaml` encodes this in `start_datetime`/`end_datetime` of the resync stream's `incremental_sync` section. |
 | `tokenUsage` | Nested JSON object on usage events containing `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `totalCents`. May be `null` when token detail is unavailable. |
 | Bronze Table | Raw data table in the destination, preserving source-native field names and types without transformation. |
 | `data_source` | Discriminator field set to `insight_cursor` in all Bronze rows, enabling multi-source queries in Silver/Gold. |
@@ -424,11 +425,14 @@ Usage event cost fields (`requestsCosts`, `cursorTokenFee`, `totalCents`) **MUST
 - Usage events stream extracts individual AI invocations with model, cost, kind, and optional `tokenUsage` nested object
 - Daily usage stream extracts per-user daily aggregates with all activity metrics (chat, composer, agent, tabs, lines)
 - Incremental sync on second run extracts only new data (no duplicates for members and audit logs; upsert for events and daily usage)
-- `email`/`userEmail` is present in every record across all streams
+- `email`/`userEmail` is present in every record across all data streams except the monitoring stream (`cursor_collection_runs`), which does not carry user identity fields
 - Pagination is exhausted for all paginated endpoints (no truncated results)
 - Basic authentication works correctly with the team API key
-- `descriptor.yaml` is present at `src/ingestion/connectors/ai-dev/cursor/descriptor.yaml`, valid, and lists all 5 streams with correct `bronze_table`, `primary_key`, and `cursor_field` values (post-merge deliverable — created alongside `connector.yaml`)
-- dbt model `to_ai_dev_usage.sql` compiles successfully and produces `class_ai_dev_usage` Silver table with `tenant_id` and `data_source` preserved (post-merge deliverable — created after Bronze tables are validated)
+
+**Future Implementation Validation** (verified upon implementation, not in current PR):
+
+- Upon implementation, `descriptor.yaml` MUST be present at `src/ingestion/connectors/ai-dev/cursor/descriptor.yaml`, valid, and list all 6 streams with correct `bronze_table`, `primary_key`, and `cursor_field` values
+- Upon implementation, `to_ai_dev_usage.sql` MUST compile successfully and produce `class_ai_dev_usage` Silver table preserving `tenant_id` and `data_source`
 - `tenant_id` is present in every record emitted by the connector (injected via `AddFields` transformation in the manifest `spec.connection_specification`)
 
 ## 10. Dependencies

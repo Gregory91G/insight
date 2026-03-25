@@ -30,7 +30,7 @@
   - [API Discrepancies Log](#api-discrepancies-log)
   - [Open Questions](#open-questions)
   - [Non-Applicable Domains](#non-applicable-domains)
-  - [ADR Status](#adr-status)
+  - [Architecture Decision Records](#architecture-decision-records)
 - [5. Traceability](#5-traceability)
 
 <!-- /toc -->
@@ -650,7 +650,7 @@ These columns are not defined in the manifest schema but are present in all Bron
 **Notes**:
 
 - `tokenUsage` is preserved as a nested JSON object at Bronze level. The Silver layer is responsible for flattening `inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `totalCents` into separate columns. When `tokenUsage` is `null`, the event has no token-level detail — this is **not** the same as zero-cost and must not be treated as such.
-- The `unique` key is computed as a simple concatenation of `userEmail` and `timestamp`. The production system uses a SHA-256 hash of `timestamp|userEmail|model|kind|inputTokens|outputTokens` for stronger deduplication, but this requires token-level access which is not available when `tokenUsage` is null. The simple concatenation is sufficient for the declarative manifest; Silver layer may re-hash for stronger dedup.
+- The `unique` key is computed as a simple concatenation of `userEmail` and `timestamp`. See [ADR-0001](ADR/0001-usage-events-dedup-key.md) for the rationale, accepted collision risk, and Silver-layer mitigation path.
 - The field `isFreeBugbot` is present in the actual API but was absent from the original connector specification (`cursor.md`). Fields `isChargeable` and `isHeadless` appear in the original specification but are **not** returned by the current API — see [API Discrepancies Log](#api-discrepancies-log).
 
 #### Table: `cursor_usage_events_daily_resync`
@@ -957,16 +957,18 @@ The following checklist domains have been evaluated and are not applicable for t
 | **COMPL (Compliance)** | Limited but applicable. The connector extracts work emails and AI activity metrics — personal/work-linked data under GDPR. Minimum controls: (1) Data classification: emails are personal data; activity metrics are work-linked. (2) Retention and deletion: responsibility of the Airbyte platform and destination owner. (3) Masking/redaction: recommend destination-level controls if required by policy. (4) GDPR/data residency: data access controls owned by the platform operator; connector does not store data beyond transit. |
 | **UX (Usability)** | No user-facing interface. The only UX surface is the Airbyte connection configuration form (two required fields: `tenant_id` and `api_key`), which is defined by the `spec` section of the manifest. |
 
-### ADR Status
+### Architecture Decision Records
 
-No ADRs have been created for this connector yet. Key architectural decisions are documented inline:
+| ADR | Decision | Status |
+|-----|----------|--------|
+| [ADR-0001](ADR/0001-usage-events-dedup-key.md) | Usage events deduplication key: simple concatenation (`userEmail + timestamp`) over SHA-256 hash — accepted collision risk at ms precision, production parity, Silver layer can re-hash if needed | Accepted |
+
+Additional architectural decisions documented inline:
 
 - **Authentication mechanism** (Basic auth over Bearer): §2.2 Constraint `cpt-insightspec-constraint-cursor-basic-auth`
 - **Token usage nested vs flattened**: §3.7 Table `cursor_usage_events` Notes
 - **Dual-schedule sync strategy**: §4 Dual-Schedule Sync
 - **API discrepancies resolution**: §4 API Discrepancies Log
-
-If any of these decisions require formal review or become contested, they should be extracted into standalone ADR documents in the [ADR/](./ADR/) directory.
 
 ## 5. Traceability
 
