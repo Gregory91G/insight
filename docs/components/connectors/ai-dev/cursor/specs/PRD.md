@@ -151,13 +151,9 @@ Resolves `email`/`userEmail` from Cursor Bronze tables to canonical `person_id` 
 
 ### 4.1 In Scope
 
-- Extraction of team member directory from `GET /teams/members`
-- Extraction of audit log events from `GET /teams/audit-logs`
-- Extraction of individual AI usage events from `POST /teams/filtered-usage-events` (hourly incremental)
-- Daily resync of usage events for the previous day (`cursor_usage_events_daily_resync`) to capture retroactive cost adjustments
-- Extraction of daily aggregated usage from `POST /teams/daily-usage-data`
-- Incremental sync using `timestamp`/`date` as cursors
-- Connector execution monitoring via `cursor_collection_runs` stream
+- Connector execution monitoring via a collection runs stream
+- Identity resolution via `email` and `userEmail`
+- Bronze-layer table schemas for all streams
 - Identity resolution via `email` and `userEmail`
 - Bronze-layer table schemas for all 6 streams (4 data + 1 resync + 1 monitoring)
 - Connector package descriptor (`descriptor.yaml`) with stream-to-table mappings and Silver targets
