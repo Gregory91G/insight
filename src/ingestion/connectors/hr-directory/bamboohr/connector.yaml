@@ -108,6 +108,8 @@ definitions:
         fields:
           - path: [tenant_id]
             value: "{{ config['tenant_id'] }}"
+          - path: [source_instance_id]
+            value: "bamboohr-{{ config['domain'] }}"
           - path: [_source]
             value: "bamboohr"
           - path: [_extracted_at]
@@ -120,6 +122,8 @@ definitions:
         additionalProperties: true
         properties:
           tenant_id:
+            type: string
+          source_instance_id:
             type: string
           id:
             type: string
@@ -242,6 +246,8 @@ definitions:
         fields:
           - path: [tenant_id]
             value: "{{ config['tenant_id'] }}"
+          - path: [source_instance_id]
+            value: "bamboohr-{{ config['domain'] }}"
           - path: [_source]
             value: "bamboohr"
           - path: [_extracted_at]
@@ -254,6 +260,8 @@ definitions:
         additionalProperties: true
         properties:
           tenant_id:
+            type: string
+          source_instance_id:
             type: string
           id:
             type: string
@@ -368,6 +376,8 @@ definitions:
             value: "{{ 'd' ~ record['id'] if record.get('deprecated', false) else record['id'] | string }}"
           - path: [tenant_id]
             value: "{{ config['tenant_id'] }}"
+          - path: [source_instance_id]
+            value: "bamboohr-{{ config['domain'] }}"
           - path: [_source]
             value: "bamboohr"
           - path: [_extracted_at]
@@ -380,6 +390,8 @@ definitions:
         additionalProperties: true
         properties:
           tenant_id:
+            type: string
+          source_instance_id:
             type: string
           id:
             type:
@@ -433,7 +445,7 @@ spec:
       tenant_id:
         type: string
         title: "Tenant ID"
-        description: "Tenant isolation identifier."
+        description: "Tenant isolation identifier (UUID)."
         order: 0
       api_key:
         type: string

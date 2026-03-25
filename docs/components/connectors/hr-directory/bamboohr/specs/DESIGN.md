@@ -255,8 +255,9 @@ None within this artifact. At runtime, the connector is executed by the Airbyte 
   "properties": {
     "tenant_id": {
       "type": "string",
+      "format": "uuid",
       "title": "Tenant ID",
-      "description": "Tenant isolation identifier"
+      "description": "Tenant isolation identifier (UUID)"
     },
     "api_key": {
       "type": "string",
@@ -336,7 +337,8 @@ sequenceDiagram
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `tenant_id` | String | Tenant isolation — injected by connector |
+| `tenant_id` | UUID | Tenant identifier — injected by framework; partitions all data by customer |
+| `source_instance_id` | String | Source instance identifier (e.g. `bamboohr-acme`) — injected by connector |
 | `id` | String | PK: BambooHR employee ID |
 | `displayName` | String | Full display name |
 | `firstName` | String | First/given name |
@@ -371,7 +373,8 @@ sequenceDiagram
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `tenant_id` | String | Tenant isolation — injected by connector |
+| `tenant_id` | UUID | Tenant identifier — injected by framework; partitions all data by customer |
+| `source_instance_id` | String | Source instance identifier (e.g. `bamboohr-acme`) — injected by connector |
 | `id` | String | PK: BambooHR time-off request ID |
 | `employeeId` | String | BambooHR employee ID — joins to `employees.id` |
 | `name` | String | Employee display name |
@@ -394,7 +397,8 @@ sequenceDiagram
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `tenant_id` | String | Tenant isolation — injected by connector |
+| `tenant_id` | UUID | Tenant identifier — injected by framework; partitions all data by customer |
+| `source_instance_id` | String | Source instance identifier (e.g. `bamboohr-acme`) — injected by connector |
 | `id` | Number | BambooHR field ID (source identifier) |
 | `name` | String | Field display name |
 | `type` | String | Field data type (e.g., `text`, `list`, `date`, `employee`) |
@@ -482,7 +486,6 @@ BambooHR `id` and `supervisorEId` are BambooHR-internal identifiers — retained
 - **Domain README**: [../../README.md](../../README.md) — HR Silver Layer design
 - **Connector Framework DESIGN**: [../../../../domain/connector/specs/DESIGN.md](../../../../domain/connector/specs/DESIGN.md)
 - **ADR directory**: [./ADR/](./ADR/)
-- **Connector Reference**: `bamboohr.md` in parent directory — Bronze table spec (reference model)
 
 ---
 
