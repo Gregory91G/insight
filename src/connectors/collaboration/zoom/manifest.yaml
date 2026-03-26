@@ -300,6 +300,21 @@ definitions:
               partition_field: meeting_uuid
               stream:
                 $ref: "#/definitions/streams/meetings"
+            - type: ParentStreamConfig
+              parent_key: meeting_series_id
+              partition_field: meeting_series_id
+              stream:
+                $ref: "#/definitions/streams/meetings"
+            - type: ParentStreamConfig
+              parent_key: meeting_occurrence_id
+              partition_field: meeting_occurrence_id
+              stream:
+                $ref: "#/definitions/streams/meetings"
+            - type: ParentStreamConfig
+              parent_key: meeting_instance_key
+              partition_field: meeting_instance_key
+              stream:
+                $ref: "#/definitions/streams/meetings"
         decoder:
           type: JsonDecoder
         requester:
@@ -345,11 +360,11 @@ definitions:
             - type: AddedFieldDefinition
               path:
                 - meeting_series_id
-              value: "{{ record.get('id') }}"
+              value: "{{ stream_partition.meeting_series_id }}"
             - type: AddedFieldDefinition
               path:
                 - meeting_occurrence_id
-              value: "{{ record.get('occurrence_id') }}"
+              value: "{{ stream_partition.meeting_occurrence_id }}"
             - type: AddedFieldDefinition
               path:
                 - meeting_uuid
@@ -357,13 +372,7 @@ definitions:
             - type: AddedFieldDefinition
               path:
                 - meeting_instance_key
-              value: >-
-                {{ ('zoom:uuid:' ~ stream_partition.meeting_uuid|lower) if stream_partition.meeting_uuid
-                else (('zoom:occurrence:' ~ record.get('id') ~ ':'
-                ~ record.get('occurrence_id')) if record.get('occurrence_id')
-                else ('zoom:series-window:' ~ record.get('id') ~
-                ':' ~ (record.get('join_time') or record.get('start_time') or
-                now_utc().strftime('%Y-%m-%dT%H:%M:%SZ')))) }}
+              value: "{{ stream_partition.meeting_instance_key }}"
             - type: AddedFieldDefinition
               path:
                 - participant_key
@@ -472,7 +481,9 @@ definitions:
             - type: AddedFieldDefinition
               path:
                 - activity_date
-              value: "{{ record.get('date') or record.get('message_time') or record.get('timestamp') }}"
+              value: >-
+                {{ record.get('date_time') or record.get('message_time') or
+                ((record.get('date') ~ 'T00:00:00Z') if record.get('date') else none) }}
             - type: AddedFieldDefinition
               path:
                 - message_count

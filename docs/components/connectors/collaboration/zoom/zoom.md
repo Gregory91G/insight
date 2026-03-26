@@ -181,10 +181,10 @@ The current manifest requires these configuration properties:
 - `(meeting_instance_key, participant_key, join_at)`
 
 **Added fields**:
-- `meeting_series_id`
-- `meeting_occurrence_id`
+- `meeting_series_id` from parent partition
+- `meeting_occurrence_id` from parent partition
 - `meeting_uuid` from parent partition
-- `meeting_instance_key`
+- `meeting_instance_key` from parent partition
 - `participant_key = id or user_id or email or name`
 - `join_at = join_time`
 - `leave_at = leave_time`
@@ -239,7 +239,7 @@ The current manifest requires these configuration properties:
 - `zoom_user_id` from parent partition
 - `message_activity_id = id or message_id or deterministic fallback`
 - `channel_type = record['channel_type'] or 'direct'`
-- `activity_date = date or message_time or timestamp`
+- `activity_date = date_time or message_time or date + T00:00:00Z`
 - `message_count = count or 1`
 - `source_endpoint = chat/users/{userId}/messages`
 - `tenant_id`

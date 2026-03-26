@@ -310,8 +310,8 @@ The current manifest emits four logical source entities. The table names below a
 |--------|------|-------------|
 | `tenant_id` | String | Value copied from `config['insight_tenant_id']` |
 | `meeting_instance_key` | String | Canonical parent meeting key |
-| `meeting_series_id` | String | Source meeting series identifier when present |
-| `meeting_occurrence_id` | String | Source occurrence identifier when present |
+| `meeting_series_id` | String | Parent meeting series identifier from partition context |
+| `meeting_occurrence_id` | String | Parent occurrence identifier from partition context |
 | `meeting_uuid` | String | Parent meeting UUID from partition context |
 | `participant_key` | String | Derived from id, user_id, email, or name |
 | `zoom_user_id` | String | Source participant user identifier when present |
@@ -332,7 +332,7 @@ The current manifest emits four logical source entities. The table names below a
 | `message_activity_id` | String | Source event ID or deterministic fallback key |
 | `zoom_user_id` | String | Parent user identifier from partition context |
 | `email` | String | Email when present in payload |
-| `activity_date` | DateTime | `date`, `message_time`, or `timestamp` from payload |
+| `activity_date` | DateTime | Normalized ISO-8601 value from `date_time`, `message_time`, or `date` at midnight UTC |
 | `channel_type` | String | Source channel type or `direct` fallback |
 | `message_count` | Int | Source count or `1` fallback |
 | `aggregation_level` | String | Source aggregation level when present |
@@ -406,7 +406,7 @@ Meetings:
 ### Record Linkage Model
 
 Implemented strong linkages:
-- `meetings` -> `participants` through `meeting_instance_key`
+- `meetings` -> `participants` through parent-partition identity fields including `meeting_instance_key`
 - `users` -> `message_activities` through `zoom_user_id`
 
 Not implemented in current manifest:
