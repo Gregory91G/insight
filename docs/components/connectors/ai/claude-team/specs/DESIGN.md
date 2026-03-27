@@ -120,7 +120,7 @@ Each Anthropic Admin API endpoint maps to exactly one stream. `GET /v1/organizat
 
 - [ ] `p2` - **ID**: `cpt-insightspec-principle-claude-team-source-native-schema`
 
-Bronze tables preserve the original Anthropic Admin API field names in their native casing (snake_case). Nested objects (notably `data_residency` in workspaces) are preserved as-is at Bronze level -- flattening and type normalization happen in the Silver layer. The only added fields are `tenant_id`, `source_instance_id`, `collected_at`, `data_source`, and `_version` for framework support and deduplication.
+Bronze tables preserve the original Anthropic Admin API field names in their native casing (snake_case). Nested objects (notably `data_residency` in workspaces) are preserved as-is at Bronze level -- flattening and type normalization happen in the Silver layer. The only added fields are `tenant_id`, `source_instance_id`, `collected_at`, and `data_source` for framework support. Note: `_version` and `metadata` (full API response JSON) are documented in Bronze table schemas for forward compatibility but are **not implemented** in the declarative manifest — the Airbyte `AddFields` transformation cannot capture the full response payload or generate deduplication versions.
 
 ### 2.2 Constraints
 
@@ -767,16 +767,23 @@ The Identity Manager resolves `email`/`actor_identifier` -> canonical `person_id
 |---------------|-------------------|-------|
 | `tenant_id` | `tenant_id` | Framework-injected |
 | `source_instance_id` | `source_instance_id` | Connector instance |
-| `data_source` | `data_source` | Always `insight_claude_team` |
+| `unique_id` | -- | Computed: `concat(date, '\|', actor_identifier, '\|', terminal_type)`. Note: `actor_type` is omitted because the model filters to `actor_type = 'user'` (always constant); Bronze key includes it but Silver does not. |
+| `report_date` | `date` | Rename from `date` |
 | `email` | `actor_identifier` | Identity key (when `actor_type = 'user'`) |
-| `date` | `date` | Report date (ISO 8601) |
+| `terminal_type` | `terminal_type` | Client terminal type |
 | `input_tokens` | `input_tokens` | Input tokens consumed |
 | `output_tokens` | `output_tokens` | Output tokens generated |
 | `cache_read_tokens` | `cache_read_tokens` | Tokens from prompt cache |
 | `cache_creation_tokens` | `cache_creation_tokens` | Tokens written to cache |
+| `total_tokens` | -- | Computed: `input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens` |
 | `tool_use_count` | `tool_use_count` | Tool/function calls -- Claude Code signal |
 | `session_count` | `session_count` | Distinct sessions |
-| `terminal_type` | `terminal_type` | Client terminal type |
+| `lines_generated` | `lines_generated` | Lines of code generated |
+| `person_id` | -- | NULL at Silver step 1; resolved in step 2 via Identity Manager |
+| `provider` | -- | Constant: `'anthropic'` |
+| `client` | -- | Constant: `'claude_code'` |
+| `data_source` | `data_source` | Always `insight_claude_team` |
+| `collected_at` | `collected_at` | Collection timestamp |
 
 **`class_ai_tool_usage` field mapping** (placeholder):
 

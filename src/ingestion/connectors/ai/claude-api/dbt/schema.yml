@@ -25,7 +25,7 @@ models:
       - name: source_instance_id
         description: "Connector instance identifier"
       - name: unique_id
-        description: "Composite dedup key: date|model|api_key_id|workspace_id|service_tier|context_window|inference_geo|speed"
+        description: "Composite dedup key: date|model|api_key_id|workspace_id|service_tier|context_window"
         tests:
           - not_null
           - unique
@@ -47,10 +47,6 @@ models:
         description: "API service tier"
       - name: context_window
         description: "Context window size used"
-      - name: inference_geo
-        description: "Inference geography"
-      - name: speed
-        description: "Inference speed tier"
       - name: uncached_input_tokens
         description: "Input tokens not served from cache"
       - name: cache_read_tokens

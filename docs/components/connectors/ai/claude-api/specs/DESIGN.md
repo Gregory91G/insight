@@ -157,7 +157,7 @@ API keys, workspaces, and invites are small, slowly-changing dimension tables. F
 
 - [ ] `p1` - **ID**: `cpt-insightspec-principle-claude-api-framework-fields`
 
-All streams inject `tenant_id`, `source_instance_id`, `data_source`, `collected_at`, and `_version` via `AddFields` transformations. This is consistent across all Insight connectors and enables multi-tenant operation.
+All streams inject `tenant_id`, `source_instance_id`, `data_source`, and `collected_at` via `AddFields` transformations. This is consistent across all Insight connectors and enables multi-tenant operation. Note: `_version` and `metadata` (full API response JSON) are documented in Bronze table schemas for forward compatibility but are **not implemented** in the declarative manifest — the Airbyte `AddFields` transformation cannot capture the full response payload or generate deduplication versions. These fields may be added by a destination-side post-processing step if needed.
 
 ### 2.2 Constraints
 
@@ -177,7 +177,7 @@ The usage and cost report endpoints enforce a maximum date range of 31 days per 
 
 - [ ] `p1` - **ID**: `cpt-insightspec-constraint-claude-api-no-per-request`
 
-The Anthropic Admin API provides daily aggregated usage reports, not per-request logs. The finest granularity available is one row per `(date, model, api_key_id, workspace_id, service_tier, context_window, inference_geo, speed)`.
+The Anthropic Admin API provides daily aggregated usage reports, not per-request logs. The `group_by` parameter accepts max 5 dimensions; the connector uses: `model`, `api_key_id`, `workspace_id`, `service_tier`, `context_window` (matching the reference implementation). `inference_geo` and `speed` are not included in `group_by` but are retained in the Bronze schema as nullable fields — the API may return them in the response. Both are excluded from the composite unique key. The finest granularity for the unique key is `(date, model, api_key_id, workspace_id, service_tier, context_window)`.
 
 #### GET-Only Endpoints
 
@@ -428,15 +428,15 @@ sequenceDiagram
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
 | `source_instance_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
-| `unique` | String | Composite key: `{date}\|{model}\|{api_key_id}\|{workspace_id}\|{service_tier}\|{context_window}\|{inference_geo}\|{speed}` |
+| `unique` | String | Composite key: `{date}\|{model}\|{api_key_id}\|{workspace_id}\|{service_tier}\|{context_window}` |
 | `date` | String | Usage date (ISO 8601 date) |
 | `model` | String | Model ID (e.g., `claude-opus-4-6`, `claude-sonnet-4-6`) |
 | `api_key_id` | String | API key identifier |
 | `workspace_id` | String | Workspace identifier |
 | `service_tier` | String | Service tier (e.g., `scale`, `standard`) |
 | `context_window` | String | Context window size |
-| `inference_geo` | String | Inference geographic region |
-| `speed` | String | Speed tier |
+| `inference_geo` | String (nullable) | Inference geographic region — not in `group_by` (max 5 limit); retained in schema |
+| `speed` | String (nullable) | Speed tier — not a valid `group_by` dimension; retained for forward compatibility |
 | `uncached_input_tokens` | Integer | Input tokens not served from cache |
 | `cache_read_tokens` | Integer | Tokens served from prompt cache |
 | `cache_creation_5m_tokens` | Integer | Tokens written to prompt cache with 5-minute TTL |
@@ -450,7 +450,7 @@ sequenceDiagram
 
 **PK**: `unique`
 
-**Granularity**: One row per `(date, model, api_key_id, workspace_id, service_tier, context_window, inference_geo, speed)`.
+**Granularity**: One row per `(date, model, api_key_id, workspace_id, service_tier, context_window)`.
 
 ---
 
@@ -614,7 +614,7 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 | Bronze Field (`claude_api_messages_usage`) | Silver Field (`class_ai_api_usage`) | Transformation |
 |--------------------------------------------|-------------------------------------|---------------|
 | `tenant_id` | `tenant_id` | Pass through |
-| `date` | `usage_date` | Pass through |
+| `date` | `report_date` | Rename |
 | `model` | `model` | Pass through |
 | `api_key_id` | `api_key_id` | Pass through |
 | `workspace_id` | `workspace_id` | Pass through |
@@ -622,18 +622,18 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 | -- | `api_key_name` | JOIN `claude_api_keys.name` |
 | `service_tier` | `service_tier` | Pass through |
 | `context_window` | `context_window` | Pass through |
-| `inference_geo` | `inference_geo` | Pass through |
-| `speed` | `speed` | Pass through |
-| `uncached_input_tokens` | `input_tokens` | Pass through |
+| `uncached_input_tokens` | `uncached_input_tokens` | Pass through |
 | `cache_read_tokens` | `cache_read_tokens` | Pass through |
 | `cache_creation_5m_tokens` | `cache_creation_tokens` | `cache_creation_5m_tokens + cache_creation_1h_tokens` |
 | `output_tokens` | `output_tokens` | Pass through |
 | `web_search_requests` | `web_search_requests` | Pass through |
-| -- | `total_tokens` | `uncached_input_tokens + cache_read_tokens + output_tokens` |
+| -- | `total_input_tokens` | `uncached_input_tokens + cache_read_tokens + cache_creation_5m_tokens + cache_creation_1h_tokens` |
+| -- | `total_tokens` | `uncached_input_tokens + cache_read_tokens + cache_creation_5m_tokens + cache_creation_1h_tokens + output_tokens` |
 | -- | `cost_cents` | JOIN `claude_api_cost_report` (approximate; see OQ) |
 | `data_source` | `data_source` | `'insight_claude_api'` |
 | -- | `provider` | `'anthropic'` (constant) |
 | -- | `person_id` | NULL (no user attribution at API level) |
+| `source_instance_id` | `source_instance_id` | Pass through |
 
 #### Silver/Gold Summary
 
@@ -722,7 +722,9 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 
 ### 4.7 ADRs
 
-No ADRs have been recorded yet. The `specs/ADR/` directory is provisioned for future architectural decisions.
+| ADR | Title | Status |
+|-----|-------|--------|
+| [ADR-001](./ADR/ADR-001-group-by-limit-inference-geo.md) | Drop `inference_geo` from `group_by` dimensions (API max-5 limit) | Accepted |
 
 ---
 

@@ -189,6 +189,8 @@ Unlike Claude Team Plan (conversational, flat-seat billing), the Claude API is p
 
 The connector **MUST** collect daily messages usage reports from `/v1/organizations/usage_report/messages`, capturing `date`, `model`, `api_key_id`, `workspace_id`, `service_tier`, `context_window`, `inference_geo`, `speed`, `uncached_input_tokens`, `cache_read_tokens`, `cache_creation_5m_tokens`, `cache_creation_1h_tokens`, `output_tokens`, and `web_search_requests` at one row per unique dimension combination per day.
 
+Note: `inference_geo` and `speed` are collected as nullable fields but are not available as `group_by` dimensions (API limit of 5 dimensions) — see [ADR-001](./ADR/ADR-001-group-by-limit-inference-geo.md).
+
 **Rationale**: Messages usage is the primary signal for API token consumption and cost attribution across all organizational dimensions.
 **Actors**: `cpt-insightspec-actor-claude-api-analytics-eng`
 
@@ -285,7 +287,7 @@ All records across all streams **MUST** include `tenant_id` (from config), `sour
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-claude-api-usage-unique-key`
 
-The connector **MUST** generate a composite `unique` key for each messages usage record from `(date, model, api_key_id, workspace_id, service_tier, context_window, inference_geo, speed)` to enable deduplication.
+The connector **MUST** generate a composite `unique` key for each messages usage record from `(date, model, api_key_id, workspace_id, service_tier, context_window)` to enable deduplication. Note: `inference_geo` and `speed` were removed from the key due to API constraints — see [ADR-001](./ADR/ADR-001-group-by-limit-inference-geo.md).
 
 **Rationale**: Usage records have no natural primary key from the API; a composite key is required for upsert semantics.
 **Actors**: `cpt-insightspec-actor-claude-api-analytics-eng`

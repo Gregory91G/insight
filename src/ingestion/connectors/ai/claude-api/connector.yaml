@@ -123,7 +123,7 @@ streams:
       requester:
         type: HttpRequester
         url_base: https://api.anthropic.com
-        path: /v1/organizations/usage_report/messages
+        path: "/v1/organizations/usage_report/messages?group_by[]=model&group_by[]=api_key_id&group_by[]=workspace_id&group_by[]=service_tier&group_by[]=context_window"
         http_method: GET
         request_headers:
           $ref: "#/definitions/anthropic_headers"
@@ -131,7 +131,6 @@ streams:
           $ref: "#/definitions/api_key_authenticator"
         request_parameters:
           bucket_width: "1d"
-          "group_by[]": "model,api_key_id,workspace_id,service_tier,context_window,inference_geo,speed"
       record_selector:
         type: RecordSelector
         extractor:
@@ -146,7 +145,7 @@ streams:
         fields:
           - path:
               - unique
-            value: "{{ record.get('date', '') }}|{{ record.get('model', '') }}|{{ record.get('api_key_id', '') }}|{{ record.get('workspace_id', '') }}|{{ record.get('service_tier', '') }}|{{ record.get('context_window', '') }}|{{ record.get('inference_geo', '') }}|{{ record.get('speed', '') }}"
+            value: "{{ record.get('date', '') }}|{{ record.get('model', '') }}|{{ record.get('api_key_id', '') }}|{{ record.get('workspace_id', '') }}|{{ record.get('service_tier', '') }}|{{ record.get('context_window', '') }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
@@ -207,7 +206,7 @@ streams:
       requester:
         type: HttpRequester
         url_base: https://api.anthropic.com
-        path: /v1/organizations/cost_report
+        path: "/v1/organizations/cost_report?group_by[]=workspace_id&group_by[]=description"
         http_method: GET
         request_headers:
           $ref: "#/definitions/anthropic_headers"
@@ -215,7 +214,6 @@ streams:
           $ref: "#/definitions/api_key_authenticator"
         request_parameters:
           bucket_width: "1d"
-          "group_by[]": "workspace_id,description"
       record_selector:
         type: RecordSelector
         extractor:
