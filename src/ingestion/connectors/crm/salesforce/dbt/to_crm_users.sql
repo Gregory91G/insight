@@ -14,12 +14,12 @@ SELECT
     Title                                           AS title,
     Department                                      AS department,
     toInt64(IsActive = true)                        AS is_active,
-    concat('{',
-        '"Username":"',   coalesce(toString(Username), ''), '"',
-        ',"ProfileId":"', coalesce(toString(ProfileId), ''), '"',
-        ',"UserRoleId":"', coalesce(toString(UserRoleId), ''), '"',
-        ',"IsDeleted":',  'false',
-    '}')                                            AS metadata,
+    toJSONString(map(
+        'Username',   coalesce(toString(Username), ''),
+        'ProfileId',  coalesce(toString(ProfileId), ''),
+        'UserRoleId', coalesce(toString(UserRoleId), ''),
+        'IsDeleted',  toString(coalesce(IsDeleted, false))
+    ))                                              AS metadata,
     collected_at,
     data_source,
     toUnixTimestamp64Milli(

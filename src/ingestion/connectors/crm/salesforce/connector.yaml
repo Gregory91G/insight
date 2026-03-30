@@ -42,6 +42,7 @@ definitions:
           backoff_strategies:
             - type: ExponentialBackoffStrategy
               factor: 5
+          max_retries: 10
         - type: DefaultErrorHandler
           response_filters:
             - type: HttpResponseFilter
@@ -99,7 +100,7 @@ definitions:
         request_parameters:
           q: >-
             SELECT Id, Name, Type, Industry, Website,
-            OwnerId, ParentId,
+            OwnerId, ParentId, RecordTypeId,
             BillingCity, BillingState, BillingCountry,
             NumberOfEmployees, AnnualRevenue,
             IsDeleted, CreatedDate, LastModifiedDate, SystemModstamp
@@ -192,7 +193,7 @@ definitions:
         request_parameters:
           q: >-
             SELECT Id, FirstName, LastName, Email, Title, Phone,
-            AccountId, OwnerId, LeadSource,
+            AccountId, OwnerId, RecordTypeId, LeadSource,
             IsDeleted, CreatedDate, LastModifiedDate, SystemModstamp
             {{ ', ' + ', '.join(config.get('contacts_custom_fields', [])) if config.get('contacts_custom_fields') else '' }}
             FROM Contact
@@ -276,9 +277,9 @@ definitions:
         path: "services/data/v66.0/queryAll"
         request_parameters:
           q: >-
-            SELECT Id, Name, StageName, Amount, CloseDate,
+            SELECT Id, Name, StageName, Amount, CurrencyIsoCode, CloseDate,
             Probability, Type, LeadSource, ForecastCategory,
-            AccountId, OwnerId,
+            AccountId, OwnerId, RecordTypeId,
             IsClosed, IsWon, IsDeleted,
             CreatedDate, LastModifiedDate, SystemModstamp
             {{ ', ' + ', '.join(config.get('opportunities_custom_fields', [])) if config.get('opportunities_custom_fields') else '' }}
@@ -431,9 +432,9 @@ definitions:
           Field:
             type: ["null", string]
           OldValue:
-            type: ["null", string]
+            type: ["null", string, number]
           NewValue:
-            type: ["null", string]
+            type: ["null", string, number]
           CreatedById:
             type: ["null", string]
           CreatedDate:

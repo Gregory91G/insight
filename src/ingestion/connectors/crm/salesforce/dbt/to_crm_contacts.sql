@@ -14,12 +14,12 @@ SELECT
     OwnerId                                         AS owner_id,
     AccountId                                       AS account_id,
     NULL                                            AS lifecycle_stage,
-    concat('{',
-        '"Title":"',      coalesce(toString(Title), ''), '"',
-        ',"Phone":"',     coalesce(toString(Phone), ''), '"',
-        ',"LeadSource":"', coalesce(toString(LeadSource), ''), '"',
-        ',"IsDeleted":',  toString(coalesce(IsDeleted, false)),
-    '}')                                            AS metadata,
+    toJSONString(map(
+        'Title',      coalesce(toString(Title), ''),
+        'Phone',      coalesce(toString(Phone), ''),
+        'LeadSource', coalesce(toString(LeadSource), ''),
+        'IsDeleted',  toString(coalesce(IsDeleted, false))
+    ))                                              AS metadata,
     CAST(map() AS Map(String, String))              AS custom_str_attrs,
     CAST(map() AS Map(String, Float64))             AS custom_num_attrs,
     parseDateTimeBestEffort(CreatedDate)             AS created_at,

@@ -15,11 +15,11 @@ SELECT
     toInt64(IsWon = true)                           AS is_won,
     LeadSource                                      AS lead_source,
     Probability                                     AS probability,
-    concat('{',
-        '"Type":"',           coalesce(toString(Type), ''), '"',
-        ',"CurrencyIsoCode":"', coalesce(toString(CurrencyIsoCode), ''), '"',
-        ',"IsDeleted":',      toString(coalesce(IsDeleted, false)),
-    '}')                                            AS metadata,
+    toJSONString(map(
+        'Type',            coalesce(toString(Type), ''),
+        'CurrencyIsoCode', coalesce(toString(CurrencyIsoCode), ''),
+        'IsDeleted',       toString(coalesce(IsDeleted, false))
+    ))                                              AS metadata,
     CAST(map() AS Map(String, String))              AS custom_str_attrs,
     CAST(map() AS Map(String, Float64))             AS custom_num_attrs,
     parseDateTimeBestEffort(CreatedDate)             AS created_at,
@@ -30,5 +30,6 @@ SELECT
     )                                               AS _version
 FROM {{ source('salesforce', 'opportunities') }}
 {% if is_incremental() %}
-WHERE SystemModstamp > (SELECT toString(max(updated_at)) FROM {{ this }})
+WHERE toUnixTimestamp64Milli(parseDateTimeBestEffort(SystemModstamp))
+      > (SELECT coalesce(max(_version), 0) FROM {{ this }})
 {% endif %}

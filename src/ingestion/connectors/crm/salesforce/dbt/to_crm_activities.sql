@@ -25,13 +25,13 @@ WITH tasks AS (
              THEN toInt64(CallDurationInSeconds)
              ELSE NULL END                          AS duration_seconds,
         Status                                      AS outcome,
-        concat('{',
-            '"Subject":"',   coalesce(toString(Subject), ''), '"',
-            ',"Priority":"', coalesce(toString(Priority), ''), '"',
-            ',"TaskSubtype":"', coalesce(toString(TaskSubtype), ''), '"',
-            ',"CallType":"', coalesce(toString(CallType), ''), '"',
-            ',"IsDeleted":', toString(coalesce(IsDeleted, false)),
-        '}')                                        AS metadata,
+        toJSONString(map(
+            'Subject',     coalesce(toString(Subject), ''),
+            'Priority',    coalesce(toString(Priority), ''),
+            'TaskSubtype', coalesce(toString(TaskSubtype), ''),
+            'CallType',    coalesce(toString(CallType), ''),
+            'IsDeleted',   toString(coalesce(IsDeleted, false))
+        ))                                          AS metadata,
         parseDateTimeBestEffort(CreatedDate)         AS created_at,
         data_source,
         toUnixTimestamp64Milli(
@@ -39,7 +39,8 @@ WITH tasks AS (
         )                                           AS _version
     FROM {{ source('salesforce', 'tasks') }}
     {% if is_incremental() %}
-    WHERE SystemModstamp > (SELECT toString(max(created_at)) FROM {{ this }})
+    WHERE toUnixTimestamp64Milli(parseDateTimeBestEffort(SystemModstamp))
+          > (SELECT coalesce(max(_version), 0) FROM {{ this }})
     {% endif %}
 ),
 
@@ -59,13 +60,13 @@ events AS (
         parseDateTimeBestEffort(StartDateTime)       AS timestamp,
         toInt64(DurationInMinutes) * 60             AS duration_seconds,
         NULL                                        AS outcome,
-        concat('{',
-            '"Subject":"',    coalesce(toString(Subject), ''), '"',
-            ',"Location":"',  coalesce(toString(Location), ''), '"',
-            ',"EndDateTime":"', coalesce(toString(EndDateTime), ''), '"',
-            ',"EventSubtype":"', coalesce(toString(EventSubtype), ''), '"',
-            ',"IsDeleted":',  toString(coalesce(IsDeleted, false)),
-        '}')                                        AS metadata,
+        toJSONString(map(
+            'Subject',      coalesce(toString(Subject), ''),
+            'Location',     coalesce(toString(Location), ''),
+            'EndDateTime',  coalesce(toString(EndDateTime), ''),
+            'EventSubtype', coalesce(toString(EventSubtype), ''),
+            'IsDeleted',    toString(coalesce(IsDeleted, false))
+        ))                                          AS metadata,
         parseDateTimeBestEffort(CreatedDate)         AS created_at,
         data_source,
         toUnixTimestamp64Milli(
@@ -73,7 +74,8 @@ events AS (
         )                                           AS _version
     FROM {{ source('salesforce', 'events') }}
     {% if is_incremental() %}
-    WHERE SystemModstamp > (SELECT toString(max(created_at)) FROM {{ this }})
+    WHERE toUnixTimestamp64Milli(parseDateTimeBestEffort(SystemModstamp))
+          > (SELECT coalesce(max(_version), 0) FROM {{ this }})
     {% endif %}
 )
 
