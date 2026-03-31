@@ -600,12 +600,13 @@ These columns are not defined in the manifest schema but are present in all Bron
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
 | `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
 | `id` | String | Anthropic platform user ID -- primary key |
+| `type` | String (nullable) | Record type (e.g., `user`) |
 | `email` | String | User email -- primary identity key -> `person_id` |
-| `name` | String | User display name |
-| `role` | String | `owner` / `admin` / `member` |
-| `status` | String | `active` / `inactive` / `pending` |
-| `added_at` | String | When the seat was assigned (ISO 8601) |
-| `last_active_at` | String | Last recorded activity across all clients (ISO 8601) |
+| `name` | String (nullable) | User display name |
+| `role` | String | `admin` / `user` |
+| `status` | String (nullable) | `active` / `inactive` / `pending` -- may be absent from API response |
+| `added_at` | String (nullable) | When the seat was assigned (ISO 8601) |
+| `last_active_at` | String (nullable) | Last recorded activity across all clients (ISO 8601) -- may be absent |
 | `collected_at` | DateTime | Collection timestamp |
 | `data_source` | String | Always `insight_claude_team` |
 | `_version` | Int | Deduplication version |
@@ -620,17 +621,19 @@ One row per user. Current-state only -- no versioning.
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
 | `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
 | `unique` | String | Primary key -- computed composite of date + actor fields + terminal_type |
-| `date` | String | Activity date (ISO 8601) -- cursor for incremental sync |
-| `actor_type` | String | `user` or `api_key` |
-| `actor_identifier` | String | Email (for users) or API key name (for API keys) -- identity key |
-| `terminal_type` | String | Terminal/client type used |
-| `input_tokens` | Float64 | Input tokens consumed |
-| `output_tokens` | Float64 | Output tokens generated |
-| `cache_read_tokens` | Float64 | Tokens served from prompt cache |
-| `cache_creation_tokens` | Float64 | Tokens written to prompt cache |
-| `tool_use_count` | Float64 | Tool/function calls made (agent-style usage signal) |
-| `session_count` | Float64 | Number of distinct Claude Code sessions |
-| `lines_generated` | Float64 | Lines of code added by Claude Code |
+| `date` | String | Activity date (`YYYY-MM-DD`) -- cursor for incremental sync |
+| `actor_type` | String (nullable) | Actor type: `api_actor` or `user` -- flattened from `actor.type` |
+| `actor_identifier` | String (nullable) | API key name (for `api_actor`) or email (for `user`) -- flattened from `actor.api_key_name` or `actor.email` |
+| `terminal_type` | String (nullable) | Terminal/client type (e.g., `Apple_Terminal`, `rider`, `non-interactive`, `unknown`) |
+| `customer_type` | String (nullable) | Customer type (e.g., `api`) |
+| `session_count` | Float64 (nullable) | Number of distinct sessions -- extracted from `core_metrics.num_sessions` |
+| `lines_added` | Float64 (nullable) | Lines of code added -- extracted from `core_metrics.lines_of_code.added` |
+| `lines_removed` | Float64 (nullable) | Lines of code removed -- extracted from `core_metrics.lines_of_code.removed` |
+| `tool_use_accepted` | Float64 (nullable) | Total accepted tool actions (sum across edit/write/multi_edit/notebook tools) |
+| `tool_use_rejected` | Float64 (nullable) | Total rejected tool actions (sum across all tool types) |
+| `core_metrics_json` | String (JSON, nullable) | Full `core_metrics` object as JSON (sessions, lines_of_code, commits, PRs) |
+| `tool_actions_json` | String (JSON, nullable) | Full `tool_actions` object as JSON (per-tool accepted/rejected counts) |
+| `model_breakdown_json` | String (JSON, nullable) | Full `model_breakdown` array as JSON (per-model token usage + estimated cost) |
 | `collected_at` | DateTime | Collection timestamp |
 | `data_source` | String | Always `insight_claude_team` |
 | `_version` | Int | Deduplication version |
@@ -638,9 +641,11 @@ One row per user. Current-state only -- no versioning.
 
 One row per `(date, actor_type, actor_identifier, terminal_type)`. Incremental sync by `date`.
 
-**Note**: The API returns actor data as a nested object `actor: {type, email|api_key_name}`. The connector flattens this via `AddFields` transformations: `actor_type = actor.type`, `actor_identifier = actor.api_key_name || actor.email`. The API also returns `core_metrics` (sessions, lines_of_code, commits, PRs), `tool_actions` (per-tool accepted/rejected counts), and `model_breakdown[]` (per-model token usage with estimated cost) as nested objects. These are available in the raw record but are not individually mapped to Bronze columns in v1 — they can be accessed via the raw JSON if needed.
+**Note**: The API returns actor data as a nested object `actor: {type, email|api_key_name}`. The connector flattens this via `AddFields` transformations: `actor_type = actor.type`, `actor_identifier = actor.api_key_name || actor.email`.
 
-**Note**: No `cost_cents` field -- under a Team subscription the per-token cost is not meaningful; the cost is the seat fee.
+**Note**: Per-model token usage (input, output, cache_read, cache_creation) and estimated cost are stored in `model_breakdown_json` as a JSON array. These can be flattened in the Silver layer via dbt `jsonb_array_elements` or `LATERAL FLATTEN`. The Bronze layer preserves the full nested structure to avoid data loss.
+
+**Note**: No `cost_cents` field -- under a Team subscription the per-token cost is not meaningful; the cost is the seat fee. However, `model_breakdown_json` contains per-model `estimated_cost` for reference.
 
 #### Table: `claude_team_workspaces`
 
@@ -668,6 +673,7 @@ Full refresh -- one row per workspace.
 | `tenant_id` | UUID | Workspace isolation key -- framework-injected |
 | `source_instance_id` | String | Connector instance identifier -- framework-injected, DEFAULT '' |
 | `unique` | String | Primary key -- computed as `{user_id}:{workspace_id}` |
+| `type` | String (nullable) | Record type (e.g., `workspace_member`) |
 | `user_id` | String | Anthropic user ID |
 | `workspace_id` | String | Workspace ID (from parent stream partition) |
 | `workspace_role` | String | User's role in this workspace |
@@ -688,7 +694,7 @@ Full refresh -- one row per user-workspace pair.
 | `email` | String | Invited user's email |
 | `role` | String | Invited role |
 | `status` | String | Invitation status |
-| `created_at` | String | Invitation creation timestamp (ISO 8601) |
+| `invited_at` | String (nullable) | Invitation creation timestamp (ISO 8601) -- API field name is `invited_at` |
 | `expires_at` | String | Invitation expiry timestamp (ISO 8601) |
 | `workspace_id` | String | Target workspace ID (nullable) |
 | `collected_at` | DateTime | Collection timestamp |
@@ -774,14 +780,16 @@ The Identity Manager resolves `email`/`actor_identifier` -> canonical `person_id
 | `report_date` | `date` | Rename from `date` |
 | `email` | `actor_identifier` | Identity key (when `actor_type = 'user'`) |
 | `terminal_type` | `terminal_type` | Client terminal type |
-| `input_tokens` | `input_tokens` | Input tokens consumed |
-| `output_tokens` | `output_tokens` | Output tokens generated |
-| `cache_read_tokens` | `cache_read_tokens` | Tokens from prompt cache |
-| `cache_creation_tokens` | `cache_creation_tokens` | Tokens written to cache |
-| `total_tokens` | -- | Computed: `input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens` |
-| `tool_use_count` | `tool_use_count` | Tool/function calls -- Claude Code signal |
-| `session_count` | `session_count` | Distinct sessions |
-| `lines_generated` | `lines_generated` | Lines of code generated |
+| `session_count` | `session_count` | Distinct sessions (from `core_metrics.num_sessions`) |
+| `lines_added` | `lines_added` | Lines of code added (from `core_metrics.lines_of_code.added`) |
+| `lines_removed` | `lines_removed` | Lines of code removed (from `core_metrics.lines_of_code.removed`) |
+| `tool_use_accepted` | `tool_use_accepted` | Total accepted tool actions (sum across all tool types) |
+| `tool_use_rejected` | `tool_use_rejected` | Total rejected tool actions |
+| `input_tokens` | -- | Extracted from `model_breakdown_json` via dbt LATERAL FLATTEN, summed across models |
+| `output_tokens` | -- | Extracted from `model_breakdown_json` via dbt |
+| `cache_read_tokens` | -- | Extracted from `model_breakdown_json` via dbt |
+| `cache_creation_tokens` | -- | Extracted from `model_breakdown_json` via dbt |
+| `total_tokens` | -- | Computed sum of all token types across all models |
 | `person_id` | -- | NULL at Silver step 1; resolved in step 2 via Identity Manager |
 | `provider` | -- | Constant: `'anthropic'` |
 | `client` | -- | Constant: `'claude_code'` |

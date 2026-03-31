@@ -1,7 +1,5 @@
 # PRD — Claude API Connector
 
-- [ ] `p3` - **ID**: `cpt-insightspec-prd-claude-api-connector`
-
 > Version 2.0 — March 2026
 > Based on: `docs/CONNECTORS_REFERENCE.md` Source 13 (Claude API), Anthropic Admin API documentation
 
@@ -10,7 +8,7 @@
 - [1. Overview](#1-overview)
   - [1.1 Purpose](#11-purpose)
   - [1.2 Background / Problem Statement](#12-background--problem-statement)
-  - [1.3 Goals](#13-goals)
+  - [1.3 Goals (Business Outcomes)](#13-goals-business-outcomes)
   - [1.4 Glossary](#14-glossary)
 - [2. Actors](#2-actors)
   - [2.1 Human Actors](#21-human-actors)
@@ -39,6 +37,8 @@
 - [11. Assumptions](#11-assumptions)
 - [12. Risks](#12-risks)
 - [13. Open Questions](#13-open-questions)
+  - [OQ-CAPI-1: Cost report granularity and description field semantics](#oq-capi-1-cost-report-granularity-and-description-field-semantics)
+  - [OQ-CAPI-2: Web search requests billing](#oq-capi-2-web-search-requests-billing)
 - [14. Non-Applicable Requirements](#14-non-applicable-requirements)
 
 <!-- /toc -->
@@ -63,7 +63,7 @@ Organizations using the Anthropic Claude API for internal tooling, automations, 
 
 Unlike Claude Team Plan (conversational, flat-seat billing), the Claude API is programmatic, pay-per-token, and not associated with individual user sessions at the API level. Cost attribution is by API key and workspace, not by person.
 
-### 1.3 Goals
+### 1.3 Goals (Business Outcomes)
 
 - Collect complete daily API token usage aggregates across all models, API keys, workspaces, and service tiers.
 - Collect daily cost reports with workspace-level and category-level breakdowns.

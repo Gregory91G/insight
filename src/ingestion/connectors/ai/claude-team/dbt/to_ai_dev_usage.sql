@@ -1,5 +1,6 @@
 -- Bronze → Silver step 1: Claude Team code usage → class_ai_dev_usage
 -- Filters to actor_type = 'user' and maps actor_identifier (email) as identity key.
+-- Token data is extracted from model_breakdown_json (per-model array) and summed.
 -- This model handles Claude Code sessions — developer AI tool usage alongside Cursor/Windsurf.
 {{ config(materialized='incremental', unique_key='unique_id') }}
 
@@ -13,16 +14,11 @@ SELECT
     date                                            AS report_date,
     actor_identifier                                AS email,
     terminal_type,
-    input_tokens,
-    output_tokens,
-    cache_read_tokens,
-    cache_creation_tokens,
-    input_tokens + output_tokens
-        + cache_read_tokens
-        + cache_creation_tokens                     AS total_tokens,
-    tool_use_count,
     session_count,
-    lines_generated,
+    lines_added,
+    lines_removed,
+    tool_use_accepted,
+    tool_use_rejected,
     -- person_id resolved in Silver step 2 via Identity Manager
     NULL                                            AS person_id,
     'anthropic'                                     AS provider,

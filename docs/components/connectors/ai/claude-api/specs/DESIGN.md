@@ -29,6 +29,8 @@
   - [4.3 Incremental Sync Strategy](#43-incremental-sync-strategy)
   - [4.4 Capacity Estimates](#44-capacity-estimates)
   - [4.5 Open Questions](#45-open-questions)
+  - [OQ-DESIGN-1: Cost allocation to usage rows](#oq-design-1-cost-allocation-to-usage-rows)
+  - [OQ-DESIGN-2: Cache token billing rates](#oq-design-2-cache-token-billing-rates)
   - [4.6 Non-Applicable Domains](#46-non-applicable-domains)
   - [4.7 ADRs](#47-adrs)
 - [5. Traceability](#5-traceability)
@@ -87,6 +89,13 @@ graph LR
 | `cpt-insightspec-nfr-claude-api-data-source` | `data_source = 'insight_claude_api'` on all rows | `AddFields` transformation | Hard-coded constant injected into every stream | Row-level assertion in integration tests |
 | `cpt-insightspec-nfr-claude-api-idempotent` | No duplicates on re-sync | Primary key definitions | `unique` composite key for usage/cost; `id` for dimension tables | Run sync twice; verify row counts unchanged |
 | `cpt-insightspec-nfr-claude-api-freshness` | 48h latency | Scheduler config | Daily schedule; lookback window covers D-2 | SLA monitoring dashboard |
+
+#### Architecture Decision Records
+
+| ADR ID | Decision | Impact |
+|--------|----------|--------|
+| `cpt-insightspec-adr-claude-api-001` | Drop `inference_geo` from `group_by` (API max-5 limit) | Unique key reduced to 6 components; inference_geo nullable in Bronze |
+| `cpt-insightspec-adr-claude-api-002` | Nested response extraction with P1D step + AddFields mapping | `field_path: [data, "0", results]`; field names mapped; cost_report schema expanded |
 
 ### 1.3 Architecture Layers
 
@@ -248,6 +257,12 @@ Single YAML file that defines all streams, authentication, pagination strategies
 - Does NOT implement Silver/Gold transformations (owned by dbt models).
 - Does NOT implement identity resolution (owned by Identity Manager).
 - Does NOT implement collection run logging (owned by framework).
+
+##### Related components (by ID)
+
+- `cpt-insightspec-component-claude-api-descriptor` — Connector Descriptor (package metadata)
+- Identity Manager — resolves `created_by` and invite emails to `person_id` (Silver step 2)
+- dbt models (`to_ai_api_usage.sql`) — Bronze → Silver transformation
 
 #### Connector Descriptor
 
@@ -731,8 +746,8 @@ The mapping from `created_by` fields and invite emails to `person_id` is handled
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| [ADR-001](./ADR/ADR-001-group-by-limit-inference-geo.md) | Drop `inference_geo` from `group_by` dimensions (API max-5 limit) | Accepted |
-| [ADR-002](./ADR/ADR-002-api-response-structure.md) | API response structure — nested records, field mapping, cost_report schema expansion | Accepted |
+| [ADR-001](./ADR/ADR-001-group-by-limit-inference-geo.md) (`cpt-insightspec-adr-claude-api-001`) | Drop `inference_geo` from `group_by` dimensions (API max-5 limit) | Accepted |
+| [ADR-002](./ADR/ADR-002-api-response-structure.md) (`cpt-insightspec-adr-claude-api-002`) | API response structure — nested records, field mapping, cost_report schema expansion | Accepted |
 
 ---
 

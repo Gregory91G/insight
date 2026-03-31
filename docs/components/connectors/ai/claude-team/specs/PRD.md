@@ -143,7 +143,7 @@ Unlike the Claude API connector (programmatic access, pay-per-token), Claude Tea
 
 #### Identity Manager
 
-**Ref**: `cpt-insightspec-actor-claude-team-identity-mgr`
+**ID**: `cpt-insightspec-actor-claude-team-identity-mgr`
 
 Resolves `email` from Claude Team Bronze tables to canonical `person_id` in Silver step 2. Enables cross-system joins (Claude Code + Cursor + Windsurf + GitHub + Jira, etc.).
 
@@ -211,7 +211,7 @@ The user collection **MUST** represent current-state only (one row per user, no 
 
 - [ ] `p2` - **ID**: `cpt-insightspec-fr-claude-team-invites-collect`
 
-The connector **MUST** extract all pending invitations from the `GET /v1/organizations/invites` endpoint, capturing `id`, `email`, `role`, `status`, `created_at`, `expires_at`, and `workspace_id`.
+The connector **MUST** extract all pending invitations from the `GET /v1/organizations/invites` endpoint, capturing `id`, `email`, `role`, `status`, `invited_at`, `expires_at`, and `workspace_id`.
 
 **Rationale**: Invitations complement the seat roster by showing planned but not-yet-accepted seats. Combined with user data, they provide a complete picture of license allocation.
 
