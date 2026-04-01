@@ -262,7 +262,7 @@ streams:
       datetime_format: "%Y-%m-%d"
       start_datetime:
         type: MinMaxDatetime
-        datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%d')) }}"
+        datetime: "{{ config.get('start_date', day_delta(-90, format='%Y-%m-%d'))[:10] }}"
         datetime_format: "%Y-%m-%d"
       step: P1D
       cursor_granularity: P1D
@@ -525,8 +525,8 @@ spec:
       start_date:
         type: string
         title: Start Date
-        description: "Earliest date to collect code usage from (YYYY-MM-DD, e.g. 2026-01-01). Defaults to 90 days ago."
-        pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+        description: "Earliest date to collect code usage from (YYYY-MM-DD, e.g. 2026-01-01). Full ISO datetimes also accepted. Defaults to 90 days ago."
+        pattern: "^\\d{4}-\\d{2}-\\d{2}(T.*)?$"
         order: 3
     additionalProperties: true
 

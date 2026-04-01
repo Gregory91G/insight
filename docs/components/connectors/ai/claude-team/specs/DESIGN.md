@@ -825,12 +825,12 @@ Only the code usage stream uses incremental sync:
 | Stream | Sync mode | Cursor field | Cursor format | Start (first run) | End |
 |--------|-----------|-------------|---------------|-------------------|-----|
 | `claude_team_users` | Full refresh | N/A | N/A | N/A | N/A |
-| `claude_team_code_usage` | Incremental | `date` | ISO 8601 | Configurable `start_date` (default: 90 days ago) | now |
+| `claude_team_code_usage` | Incremental | `date` | `YYYY-MM-DD` | Configurable `start_date` (default: 90 days ago; accepts YYYY-MM-DD or full ISO datetime, truncated to date) | now |
 | `claude_team_workspaces` | Full refresh | N/A | N/A | N/A | N/A |
 | `claude_team_workspace_members` | Full refresh | N/A | N/A | N/A | N/A |
 | `claude_team_invites` | Full refresh | N/A | N/A | N/A | N/A |
 
-**Manifest implementation**: The declarative manifest uses a fixed `start_datetime` (configurable `start_date`, default 90 days ago) with `step: P1D`. Adaptive backfill (probing backward and stopping after 6 consecutive empty days) is not supported by the Airbyte declarative framework and would require a custom CDK connector or orchestrator-level logic. The fixed lookback window is sufficient for most deployments; organizations needing deeper backfill can override `start_date` in the connection configuration. On subsequent runs, the cursor starts from the last stored `date` position.
+**Manifest implementation**: The declarative manifest uses a fixed `start_datetime` (configurable `start_date`, default 90 days ago) with `step: P1D`. The `start_date` config accepts both `YYYY-MM-DD` and full ISO datetime formats (pattern: `^\d{4}-\d{2}-\d{2}(T.*)?$`); the value is truncated to the first 10 characters (`[:10]`) before use, normalizing both formats to `YYYY-MM-DD`. The fixed lookback window is sufficient for most deployments; organizations needing deeper backfill can override `start_date` in the connection configuration. On subsequent runs, the cursor starts from the last stored `date` position.
 
 **Note**: Unlike Cursor's zero-activity rows (which return data for all team members even on empty days), the Anthropic code usage endpoint returns empty results for days with no activity.
 
