@@ -40,11 +40,13 @@ date: 2026-03-31
   - [5.5 Data Retention](#55-data-retention)
 - [6. CI/CD](#6-cicd)
 - [7. Testing Strategy](#7-testing-strategy)
-- [8. Open Questions](#8-open-questions)
+- [8. Design Decisions](#8-design-decisions)
+  - [DD-BE-01: Analytics ↔ Identity Resolution Integration](#dd-be-01-analytics--identity-resolution-integration)
+- [9. Open Questions](#9-open-questions)
   - [OQ-BE-01: Airbyte API Integration Surface](#oq-be-01-airbyte-api-integration-surface)
   - [OQ-BE-02: Circuit Breaker Implementation](#oq-be-02-circuit-breaker-implementation)
   - [OQ-BE-03: Dashboard Sharing Model](#oq-be-03-dashboard-sharing-model)
-- [9. Traceability](#9-traceability)
+- [10. Traceability](#10-traceability)
 
 <!-- /toc -->
 
@@ -54,7 +56,7 @@ date: 2026-03-31
 
 ### 1.1 Architectural Vision
 
-The Insight Backend is the API and business logic tier of the Decision Intelligence Platform. It provides a read API over ClickHouse Silver & Gold analytics layers, manages connector configurations and encrypted credentials, maintains the organizational hierarchy imported from HR/directory systems (Active Directory, BambooHR, Workday, or similar), delivers business alerts and audit capabilities, and centralizes email delivery.
+The Insight Backend is the API and business logic tier of the Insight platform. It provides a read API over ClickHouse Silver & Gold analytics layers, manages connector configurations and encrypted credentials, maintains the organizational hierarchy imported from HR/directory systems (Active Directory, BambooHR, Workday, or similar), delivers business alerts and audit capabilities, and centralizes email delivery.
 
 The backend is built on **cyberfabric-core ModKit** -- a modular Rust microservice framework that provides authentication (OIDC/JWT), authorization (AuthZEN 1.0), multi-tenant data isolation, OData query capabilities, RFC 9457 error handling, and database access patterns out of the box. Each microservice is a ModKit module with its own database, its own API version, and its own client SDK crate.
 
@@ -84,6 +86,7 @@ The system is deployed as a **standalone product** on Kubernetes via a single He
 | `cpt-insightspec-fr-be-transform-rules` | Transform Service manages dbt model configs, Silver/Gold rules, field mappings, triggers dbt runs via Kestra |
 | `cpt-insightspec-fr-be-forward-only-migrations` | Forward-only MariaDB migrations via modkit-db (SeaORM); no rollback scripts |
 | `cpt-insightspec-fr-be-migration-on-startup` | Each service provides migration binary; executed as K8s Job (Helm pre-upgrade hook) before pod rollout |
+| `cpt-insightspec-fr-be-health-checks` | Every service exposes `/health` (liveness) and `/ready` (readiness) via api-gateway; K8s probes configured in Helm |
 
 #### NFR Allocation
 
@@ -96,6 +99,7 @@ The system is deployed as a **standalone product** on Kubernetes via a single He
 | `cpt-insightspec-nfr-be-graceful-shutdown` | ModKit CancellationToken + 60s grace period | Send SIGTERM; verify in-flight requests complete, offsets committed |
 | `cpt-insightspec-nfr-be-retry-resilience` | Exponential backoff with jitter on all retryable ops | Kill dependency; verify recovery within retry budget |
 | `cpt-insightspec-nfr-be-api-versioning` | `/api/v1/...` per service from day one | Deploy v2; verify v1 clients still work |
+| `cpt-insightspec-nfr-be-api-conventions` | DNA REST conventions: cursor pagination, OData $filter/$orderby/$select, RFC 9457 errors, snake_case JSON | Integration tests verify response format per DNA spec |
 
 #### Architecture Decision Records
 
@@ -554,7 +558,7 @@ Analytics data flows through multiple connectors (GitHub, GitLab, Jira, Slack, e
 
 ##### Responsibility scope
 
-Cross-source person alias matching (email, username, employee ID). Golden record building (assembling best-value person attributes from multiple sources). Merge and split operations with audit trail. Bootstrap job (seed identity store from `class_people` Silver table). Resolution service (enrich Silver step 1 tables with `person_id` to produce Silver step 2). Conflict detection and manual override UI. GDPR erasure support. Storage: MariaDB (own DB -- alias mappings, golden records, merge history). Reads from ClickHouse Silver step 1, writes person_id back via ClickHouse Dictionary integration. Key tech: modkit-db, `clickhouse` crate.
+Cross-source person alias matching (email, username, employee ID). Golden record building (assembling best-value person attributes from multiple sources). Merge and split operations with audit trail. Bootstrap job (seed identity store from `class_people` Silver table). Resolution service (enrich Silver step 1 tables with `person_id` to produce Silver step 2). Conflict detection and manual override UI. GDPR support: v1 via admin scripts for data deletion and export across ClickHouse + MariaDB; schema designed for automated self-service erasure in v2. Storage: MariaDB (own DB -- alias mappings, golden records, merge history). Reads from ClickHouse Silver step 1, writes person_id back via ClickHouse Dictionary integration. Key tech: modkit-db, `clickhouse` crate.
 
 Full architecture documented in [Identity Resolution DESIGN](../../domain/identity-resolution/specs/DESIGN.md).
 
@@ -1094,41 +1098,37 @@ Bundled Prometheus + Grafana + Alertmanager stack for platform operators.
 
 ### 5.1 Packaging (Helm Chart)
 
-Single `helm install insight` deploys the entire platform. Works on any K8s cluster (AWS EKS, GCP GKE, Azure AKS, on-prem).
+Each service has its own Helm chart (co-located at `services/{name}/helm/`). Shared infrastructure has separate charts under `infra/`. ArgoCD deploys each as an independent Application. Works on any K8s cluster (AWS EKS, GCP GKE, Azure AKS, on-prem).
+
+**Per-service Helm chart structure** (e.g., `services/analytics-api/helm/`):
 
 ```text
-insight-helm/
+helm/
 ├── Chart.yaml
 ├── values.yaml
 ├── templates/
-│   ├── _helpers.tpl
-│   ├── analytics-api/
-│   │   ├── deployment.yaml
-│   │   ├── service.yaml
-│   │   ├── hpa.yaml
-│   │   ├── migration-job.yaml        # Helm pre-upgrade hook
-│   │   └── sealedsecret.yaml
-│   ├── connector-manager/
-│   ├── identity-service/
-│   ├── alerts-service/
-│   ├── audit-service/
-│   ├── email-service/
-│   ├── identity-resolution-service/
-│   ├── transform-service/
-│   ├── frontend/
-│   ├── ingress.yaml
-│   └── configmaps.yaml
-└── subcharts/
-    ├── clickhouse/
-    ├── mariadb/
-    ├── redis/
-    ├── redpanda/
-    ├── minio/
-    ├── airbyte/
-    ├── kestra/
-    ├── loki/
-    ├── prometheus/
-    └── sealed-secrets/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── hpa.yaml
+│   ├── migration-job.yaml            # Helm pre-upgrade hook
+│   ├── sealedsecret.yaml
+│   └── ingress.yaml
+```
+
+**Infrastructure charts** (under `infra/`):
+
+```text
+infra/
+├── clickhouse/
+├── mariadb/
+├── redis/
+├── redpanda/
+├── minio/
+├── airbyte/
+├── kestra/
+├── loki/
+├── prometheus/
+└── sealed-secrets/
 ```
 
 ### 5.2 Customer Installation
@@ -1216,34 +1216,62 @@ Tenant Admin can trigger Silver/Gold rebuild from Bronze via Connector Manager �
 
 ## 6. CI/CD
 
-**Repository structure**: Polyrepo -- one repository per service + shared libraries.
+**Repository structure**: Monorepo -- all services, shared crates, Helm chart, and frontend live in a single repository (`insight`), consistent with cyberfabric-core conventions.
 
-| Repository | Contents |
-|-----------|----------|
-| `insight-analytics-api` | Analytics API service |
-| `insight-connector-manager` | Connector Manager service |
-| `insight-identity-service` | Identity Service |
-| `insight-alerts-service` | Alerts Service |
-| `insight-audit-service` | Audit Service |
-| `insight-email-service` | Email Service |
-| `insight-identity-resolution-service` | Identity Resolution Service |
-| `insight-transform-service` | Transform Service |
-| `insight-frontend` | React SPA |
-| `insight-helm` | Helm chart (subcharts, values, templates) |
-| `insight-sdk` | Shared SDK crates (published to private registry) |
+```text
+insight/
+├── services/
+│   ├── analytics-api/
+│   │   ├── src/
+│   │   ├── helm/                      # Service-specific Helm chart
+│   │   │   ├── Chart.yaml
+│   │   │   ├── values.yaml
+│   │   │   └── templates/
+│   │   ├── Cargo.toml
+│   │   └── Dockerfile
+│   ├── connector-manager/
+│   ├── identity-service/
+│   ├── identity-resolution-service/
+│   ├── transform-service/
+│   ├── alerts-service/
+│   ├── audit-service/
+│   └── email-service/
+├── libs/
+│   ├── insight-clickhouse/
+│   ├── insight-redpanda/
+│   ├── insight-retry/
+│   └── insight-audit-client/
+├── infra/                             # Shared infrastructure Helm charts
+│   ├── clickhouse/
+│   ├── mariadb/
+│   ├── redis/
+│   ├── redpanda/
+│   ├── minio/
+│   ├── loki/
+│   └── prometheus/
+└── Cargo.toml                        # Workspace root
+```
 
-**Build** (GitHub Actions CI per repo):
-- Lint (clippy, fmt) → Unit tests → Integration tests (testcontainers) → Build Docker image → Push to container registry
+Each service has its own Helm chart (`services/{name}/helm/`). Infrastructure charts live in `infra/`. This enables independent release cycles per service -- ArgoCD manages each as a separate Application.
+
+Frontend (React SPA) lives in a **separate repository**. Shared crates in `libs/` may be moved to cyberfabric-core later if they prove generally useful beyond Insight.
+
+**Build** (GitHub Actions CI):
+- Single pipeline for the monorepo
+- Lint (clippy, fmt) → Unit tests → Integration tests (testcontainers) → Build changed Docker images → Push to container registry
+- Only rebuild/push images for services whose code (or dependencies) changed
 
 **Deployment** (ArgoCD):
 
 ```text
-GitHub Actions (per service repo)
-  → build + test + push image to registry
-  → update image tag in insight-helm repo
+GitHub Actions (monorepo)
+  → detect changed services
+  → build + test + push affected images
+  → update image tag in service's helm/values.yaml
 
-ArgoCD (watches insight-helm)
-  → detect change → sync → rolling deployment to K8s
+ArgoCD (one Application per service + one per infra chart)
+  → detect change in service helm/ → sync that service only
+  → independent rollouts, no full-platform redeploy
 ```
 
 ## 7. Testing Strategy
@@ -1253,7 +1281,23 @@ ArgoCD (watches insight-helm)
 - **SDK contract tests**: Each service SDK crate includes contract tests to verify client-server compatibility across versions.
 - **Manual QA**: End-to-end flows -- login, configure connector, view dashboard, trigger alert, verify email.
 
-## 8. Open Questions
+## 8. Design Decisions
+
+### DD-BE-01: Analytics ↔ Identity Resolution Integration
+
+**Decision**: Phased integration approach.
+
+**Phase 1 (MVP, v0.1-v0.2)**: Shared ClickHouse tables. Identity Resolution Service writes `person_id` into Silver step 2 tables. Analytics API reads those tables directly. No inter-service REST calls for identity data. ClickHouse is the integration layer.
+
+**Phase 2 (v0.3+)**: REST API enrichment. Analytics API calls Identity Resolution Service via SDK client for on-demand alias resolution, golden record lookup, or person details not materialized in ClickHouse.
+
+**Rationale**: Shared tables avoid network overhead for the read-heavy analytics path. MVP needs simplicity and speed. REST API adds a clean service boundary later for write operations (merge/split) and enrichment queries that don't belong in ClickHouse.
+
+**Trade-offs**:
+- Phase 1: faster, simpler, but couples Analytics API to Identity Resolution's ClickHouse schema
+- Phase 2: decoupled, but adds latency and a service dependency for enrichment queries
+
+## 9. Open Questions
 
 ### OQ-BE-01: Airbyte API Integration Surface
 
@@ -1279,7 +1323,7 @@ ArgoCD (watches insight-helm)
 
 **Owner**: TBD. **Target**: v2 planning.
 
-## 9. Traceability
+## 10. Traceability
 
 | Design Element | Requirement / Principle |
 |---|---|
@@ -1294,7 +1338,7 @@ ArgoCD (watches insight-helm)
 | Email Service (3.2) | `cpt-insightspec-fr-be-email-delivery` |
 | Parameterized queries (3.2, 4.5) | `cpt-insightspec-nfr-be-query-safety`, `cpt-insightspec-principle-be-secure-by-default` |
 | Envelope encryption (3.7) | `cpt-insightspec-nfr-be-secret-isolation` |
-| Per-route rate limiting (4.8) | `cpt-insightspec-nfr-be-rate-limiting` |
+| Per-route rate limiting (3.5) | `cpt-insightspec-nfr-be-rate-limiting` |
 | Graceful shutdown (4.6) | `cpt-insightspec-nfr-be-graceful-shutdown` |
 | Retry strategy (4.5) | `cpt-insightspec-nfr-be-retry-resilience` |
 | API versioning (3.3) | `cpt-insightspec-nfr-be-api-versioning`, `cpt-insightspec-principle-be-api-versioned` |
@@ -1302,4 +1346,6 @@ ArgoCD (watches insight-helm)
 | OIDC auth (4.1) | `cpt-insightspec-fr-be-oidc-auth`, `cpt-insightspec-constraint-be-oidc-only` |
 | Redpanda events (3.8) | `cpt-insightspec-principle-be-event-driven`, `cpt-insightspec-constraint-be-redpanda` |
 | Service-owns-data (all) | `cpt-insightspec-principle-be-service-owns-data` |
+| Health checks (4.8) | `cpt-insightspec-fr-be-health-checks` |
+| API conventions (3.3) | `cpt-insightspec-nfr-be-api-conventions` |
 | cyberfabric-core (3.5) | `cpt-insightspec-constraint-be-cyberfabric-core` |

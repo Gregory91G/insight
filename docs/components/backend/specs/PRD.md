@@ -31,6 +31,7 @@ date: 2026-03-31
   - [5.8 Email](#58-email)
   - [5.9 Data Transformation](#59-data-transformation)
   - [5.10 Database Operations](#510-database-operations)
+  - [5.11 Operational](#511-operational)
 - [6. Non-Functional Requirements](#6-non-functional-requirements)
   - [6.1 NFR Inclusions](#61-nfr-inclusions)
   - [6.2 NFR Exclusions](#62-nfr-exclusions)
@@ -49,11 +50,11 @@ date: 2026-03-31
 
 ### 1.1 Purpose
 
-The Insight Backend is the API and business logic tier of the Decision Intelligence Platform. It serves analytics data from ClickHouse Silver and Gold layers, manages connector configurations and encrypted credentials, maintains organizational hierarchy imported from HR/directory systems (Active Directory, BambooHR, Workday, or similar), delivers business alerts, provides a compliance audit trail, and centralizes email delivery.
+The Insight Backend is the API and business logic tier of the Insight platform. It serves analytics data from ClickHouse Silver and Gold layers, manages connector configurations and encrypted credentials, maintains organizational hierarchy imported from HR/directory systems (Active Directory, BambooHR, Workday, or similar), delivers business alerts, provides a compliance audit trail, and centralizes email delivery.
 
 ### 1.2 Background / Problem Statement
 
-Organizations collect operational data across dozens of tools (version control, task trackers, collaboration, AI tools, HR systems) but lack a unified view of team performance, process bottlenecks, and AI adoption metrics. The ingestion layer (Airbyte, Kestra, dbt) extracts and transforms this data into ClickHouse. The backend must expose this data through secure, tenant-isolated, org-scoped APIs while giving administrators control over connector configurations, user roles, and alert thresholds.
+Organizations collect operational data across dozens of tools (version control, task trackers, collaboration, AI tools, HR systems) but lack a unified view of team performance, process bottlenecks, and AI adoption metrics. The ingestion layer (Airbyte, pipeline orchestrator, dbt) extracts and transforms this data into ClickHouse. The backend must expose this data through secure, tenant-isolated, org-scoped APIs while giving administrators control over connector configurations, user roles, and alert thresholds.
 
 The product is deployed as a standalone installation on customer Kubernetes clusters. It must not depend on any specific cloud provider, external secret manager, or bundled identity provider. Customers bring their own OIDC provider and HR/directory system (Active Directory, BambooHR, Workday, or similar).
 
@@ -142,6 +143,12 @@ The product is deployed as a standalone installation on customer Kubernetes clus
 
 **Role**: Customer's email server used for delivering alert notifications and operational emails.
 
+#### Deployment Pipeline
+
+**ID**: `cpt-insightspec-actor-deployment-pipeline`
+
+**Role**: CI/CD system (GitHub Actions + ArgoCD) that builds, tests, and deploys services to Kubernetes. Executes database migrations, manages pod lifecycle via health probes, and performs rolling updates.
+
 ## 3. Operational Concept & Environment
 
 ### 3.1 Module-Specific Environment Constraints
@@ -179,7 +186,7 @@ The product is deployed as a standalone installation on customer Kubernetes clus
 - Tenant onboarding wizard (future -- initial tenant seeded via Helm values)
 - Dashboard sharing across users or org units (future v2)
 - Circuit breaker pattern (future v2 -- retry with backoff is sufficient for v1)
-- GDPR data deletion workflows (future -- schema designed to not preclude it)
+- Automated GDPR data deletion workflows (future v2 -- v1 supports GDPR via manual deletion scripts and data export on request; schema designed to not preclude automated erasure later)
 - Custom report scheduling (future -- CSV export is manual in v1)
 - PDF report generation (future v2 -- LLM-generated documents following a configurable structure: section descriptions, metric analysis, trend narratives, executive summary; charts embedded from analytics data; intended for stakeholder distribution)
 - Public analytics API (future v2 -- external API for customers to query analytics data programmatically, build custom integrations, and process metrics outside the bundled frontend; v1 exposes internal APIs consumed only by the bundled React SPA)
@@ -245,9 +252,9 @@ The system **MUST** provide CRUD operations for connector configurations (source
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-be-secret-management`
 
-The system **MUST** store connector credentials using envelope encryption with per-tenant data encryption keys (DEK) wrapped by a deployment-level key encryption key (KEK). Tenant key compromise **MUST NOT** affect other tenants.
+The system **MUST** store connector credentials encrypted at rest with per-tenant key isolation. Compromise of one tenant's credentials **MUST NOT** expose other tenants' secrets. Key rotation for one tenant **MUST NOT** require re-encryption of other tenants' data.
 
-**Rationale**: API keys and tokens are sensitive. Per-tenant isolation limits blast radius of key compromise.
+**Rationale**: API keys and tokens are sensitive. Per-tenant isolation limits blast radius of key compromise. See [DESIGN](./DESIGN.md) for encryption implementation details.
 
 **Actors**: `cpt-insightspec-actor-connector-admin`
 
@@ -299,7 +306,7 @@ The system **MUST** enforce follow-the-unit-strict visibility: when a person tra
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-be-identity-resolution-service`
 
-The system **MUST** map disparate identity signals (emails, usernames, employee IDs, system-specific handles) from multiple source systems into canonical person records. The system **MUST** support conflict detection for ambiguous matches, manual merge and split operations with audit trail, and GDPR erasure. See [Identity Resolution DESIGN](../../domain/identity-resolution/specs/DESIGN.md) and [Backend DESIGN section 3.2](./DESIGN.md) for implementation details.
+The system **MUST** map disparate identity signals (emails, usernames, employee IDs, system-specific handles) from multiple source systems into canonical person records. The system **MUST** support conflict detection for ambiguous matches, manual merge and split operations with audit trail. The system **MUST** support GDPR data subject requests (right to erasure, right to data export) -- in v1 via manual admin scripts and data export; automated self-service workflows are deferred to v2. See [Identity Resolution DESIGN](../../domain/identity-resolution/specs/DESIGN.md) and [Backend DESIGN section 3.2](./DESIGN.md) for implementation details.
 
 **Rationale**: Cross-source analytics (correlating a person's Git commits with their Jira tasks, calendar events, and HR data) requires a single canonical person_id across all data sources. Without identity resolution, each source has its own user identifiers that cannot be joined.
 
@@ -359,9 +366,9 @@ The system **MUST** provide a centralized email delivery service that consumes e
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-be-transform-rules`
 
-The system **MUST** provide CRUD operations for dbt transform rules that define how Bronze data from multiple connectors is merged into Silver unified tables (e.g., `class_commits` from GitHub + GitLab + Bitbucket) and how Silver data is aggregated into Gold metric tables. The system **MUST** manage a dependency graph between connectors and transforms so that dbt runs execute after relevant syncs complete. The system **MUST** trigger dbt runs via Kestra API and expose transform run status.
+The system **MUST** provide CRUD operations for data transformation rules that define how raw data from multiple connectors is merged into unified analytics tables and how unified data is aggregated into business metric tables. The system **MUST** manage a dependency graph between connectors and transforms so that transformations execute after relevant data syncs complete. The system **MUST** allow administrators to trigger transformation runs and monitor their status.
 
-**Rationale**: Transforms are cross-source logic (merging multiple connectors into unified schemas) and cannot be managed per-connector. A dedicated management surface enables administrators to configure field mappings, union rules, and Gold metric formulas without touching dbt code directly.
+**Rationale**: Transforms are cross-source logic (merging multiple connectors into unified schemas) and cannot be managed per-connector. A dedicated management surface enables administrators to configure mappings and formulas without touching transformation code directly. See [DESIGN](./DESIGN.md) for implementation details.
 
 **Actors**: `cpt-insightspec-actor-tenant-admin`, `cpt-insightspec-actor-connector-admin`
 
@@ -375,17 +382,29 @@ The system **MUST** use forward-only database migrations for all MariaDB schema 
 
 **Rationale**: Forward-only migrations are critical for continuous deployment via ArgoCD. Rollback scripts create a false sense of safety -- in practice they are rarely tested, often fail on production data, and introduce risk of data loss. Instead, a broken migration is fixed by shipping a new forward migration. This approach enables zero-downtime rolling deployments where old and new pod versions coexist during rollout.
 
-**Actors**: `cpt-insightspec-actor-tenant-admin`
+**Actors**: `cpt-insightspec-actor-deployment-pipeline`
 
-#### Migration Execution via K8s Jobs
+#### Migration Execution at Deploy Time
 
 - [ ] `p1` - **ID**: `cpt-insightspec-fr-be-migration-on-startup`
 
-Each service **MUST** provide a migration binary (or CLI command) that runs pending database migrations. Migrations **MUST** be executed as Kubernetes Jobs (Helm pre-upgrade hook or ArgoCD sync wave) before new application pods are rolled out. The migration Job **MUST** complete successfully before the deployment proceeds. Migrations **MUST** be idempotent -- re-running a migration that has already been applied **MUST** be a no-op.
+Each service **MUST** execute pending database migrations automatically as part of the deployment process, before new application instances accept traffic. Migrations **MUST** complete successfully before the deployment proceeds. Migrations **MUST** be idempotent -- re-running a migration that has already been applied **MUST** be a no-op.
 
-**Rationale**: K8s Jobs run once per deployment, have clear success/failure semantics, and complete before new pods start. This eliminates leader election complexity, avoids slowing service startup, and provides a clean separation between migration (deployment step) and application runtime.
+**Rationale**: Automated migration execution eliminates manual deployment steps and ensures schema is always in sync with application code. See [DESIGN](./DESIGN.md) for implementation details (K8s Jobs, Helm hooks).
 
-**Actors**: `cpt-insightspec-actor-tenant-admin`
+**Actors**: `cpt-insightspec-actor-deployment-pipeline`
+
+### 5.11 Operational
+
+#### Health Check Endpoints
+
+- [ ] `p1` - **ID**: `cpt-insightspec-fr-be-health-checks`
+
+Every service **MUST** expose a liveness endpoint and a readiness endpoint. The liveness endpoint **MUST** confirm the process is running. The readiness endpoint **MUST** verify that all critical dependencies (database, event stream, external APIs) are reachable before the service accepts traffic. Kubernetes **MUST** be able to use these endpoints for pod lifecycle management (restart unhealthy pods, stop routing to unready pods).
+
+**Rationale**: On-prem K8s deployments have no cloud-native health monitoring. Without health endpoints, failed services remain in rotation, causing cascading failures and silent data loss.
+
+**Actors**: `cpt-insightspec-actor-deployment-pipeline`
 
 ## 6. Non-Functional Requirements
 
@@ -405,11 +424,11 @@ The system **MUST** isolate tenant data at the application layer via tenant_id f
 
 - [ ] `p1` - **ID**: `cpt-insightspec-nfr-be-query-safety`
 
-All ClickHouse queries **MUST** use parameterized bind parameters only. No string interpolation or concatenation **MUST** be used in query building. Query timeouts **MUST** be enforced per request.
+All analytics queries **MUST** be safe from injection attacks. User-supplied filter parameters **MUST NOT** be interpolated into query strings. Query timeouts **MUST** be enforced per request to prevent runaway queries.
 
-**Threshold**: Zero SQL injection vectors in query builder code.
+**Threshold**: Zero injection vectors in query paths.
 
-**Rationale**: OData-to-SQL translation is a high-risk injection surface.
+**Rationale**: User-facing query APIs are a high-risk injection surface. See [DESIGN](./DESIGN.md) for implementation details.
 
 #### Secret Isolation
 
@@ -460,6 +479,23 @@ Every service **MUST** expose versioned API endpoints (`/api/v1/...`) from day o
 **Threshold**: Zero breaking changes to v1 endpoints without v2 migration path.
 
 **Rationale**: Standalone product deployed to customer environments cannot force-upgrade clients.
+
+#### API Conventions
+
+- [ ] `p1` - **ID**: `cpt-insightspec-nfr-be-api-conventions`
+
+All REST APIs **MUST** follow the project API conventions defined in [DNA REST API guidelines](../../../../DNA/REST/API.md):
+- **Pagination**: Cursor-based (`limit`, `cursor`); default 25, max 200; cursors in `page_info`.
+- **Filtering**: OData-style `$filter` with operators (`eq`, `ne`, `gt`, `ge`, `lt`, `le`, `in`, `contains`).
+- **Sorting**: OData-style `$orderby` (e.g., `$orderby=created_at desc`).
+- **Field projection**: OData-style `$select`.
+- **Response envelope**: Lists use `{ items, page_info }`, single objects unwrapped.
+- **Errors**: RFC 9457 Problem Details (`application/problem+json`) for all error responses.
+- **JSON conventions**: `snake_case` field names, ISO-8601 UTC timestamps with milliseconds, omit absent fields (no nulls).
+
+**Threshold**: 100% of list endpoints support pagination, filtering, and sorting. 100% of error responses use RFC 9457 format.
+
+**Rationale**: Consistent API conventions reduce frontend integration effort, enable generic client libraries, and ensure predictable behavior across all services.
 
 ### 6.2 NFR Exclusions
 
@@ -576,15 +612,15 @@ Every service **MUST** expose versioned API endpoints (`/api/v1/...`) from day o
 
 **Compatibility**: Adapter-based -- each adapter implements a common interface for org tree and person data retrieval.
 
-#### Kestra API Contract
+#### Pipeline Orchestrator Contract
 
-- [ ] `p1` - **ID**: `cpt-insightspec-contract-kestra`
+- [ ] `p1` - **ID**: `cpt-insightspec-contract-orchestrator`
 
-**Direction**: required from client (Transform Service triggers dbt runs via Kestra API)
+**Direction**: required from client (Transform Service triggers pipeline runs via orchestrator API)
 
 **Protocol/Format**: HTTP/REST
 
-**Compatibility**: Depends on Kestra API version. Transform Service abstracts Kestra API details.
+**Compatibility**: Transform Service abstracts orchestrator API details behind an adapter. Current orchestrator under evaluation (PR #45 proposes migration from Kestra to Argo Workflows).
 
 #### SMTP Contract
 
@@ -611,12 +647,11 @@ Every service **MUST** expose versioned API endpoints (`/api/v1/...`) from day o
 
 **Main Flow**:
 1. User navigates to dashboard
-2. System resolves person_id from OIDC token
-3. System evaluates RBAC (Viewer role allows "view" action)
-4. System computes visible org units and time ranges from memberships
-5. System queries ClickHouse with org and time scope filters
-6. System returns filtered metrics data
-7. Frontend renders charts via Recharts
+2. System verifies user identity and role permissions
+3. System determines visible org units and applicable time ranges
+4. System queries analytics data scoped to user's visibility
+5. System returns filtered metrics
+6. Frontend renders charts
 
 **Postconditions**:
 - User sees metrics only from their visible org subtree and membership periods
@@ -634,24 +669,177 @@ Every service **MUST** expose versioned API endpoints (`/api/v1/...`) from day o
 
 **Preconditions**:
 - User authenticated with Connector Admin role
-- Airbyte is reachable
 
 **Main Flow**:
 1. Admin creates connector configuration (source type, parameters, schedule)
 2. Admin provides API credentials
-3. System encrypts credentials with tenant DEK
-4. System creates Airbyte connection via API
+3. System stores credentials encrypted
+4. System registers the connection with the data extraction platform
 5. Admin triggers initial sync
 6. System monitors sync status
 
 **Postconditions**:
 - Connector configured and syncing
 - Credentials stored encrypted
-- Audit events logged for creation and secret write
+- Audit events logged
 
 **Alternative Flows**:
-- **Airbyte unreachable**: System retries with backoff, returns 503 after max attempts
-- **Invalid credentials format**: System returns 400 with validation errors
+- **Extraction platform unreachable**: System retries, returns error after max attempts
+- **Invalid credentials format**: System returns validation errors
+
+#### Review Identity Resolution
+
+- [ ] `p1` - **ID**: `cpt-insightspec-usecase-review-identity`
+
+**Actor**: `cpt-insightspec-actor-identity-admin`
+
+**Preconditions**:
+- User authenticated with Identity Admin role
+- Data from multiple sources has been ingested
+
+**Main Flow**:
+1. Admin opens identity resolution view
+2. System displays list of resolved persons with alias count per source
+3. Admin selects a person to see all linked aliases (emails, usernames, employee IDs)
+4. Admin reviews unresolved conflicts (ambiguous matches)
+5. Admin merges two person records that represent the same individual
+6. System updates all analytics references to use the merged person_id
+
+**Postconditions**:
+- Person records merged with full audit trail
+- Analytics queries reflect corrected identity
+
+**Alternative Flows**:
+- **False merge detected**: Admin splits a person record back into two separate persons
+- **No conflicts**: Admin confirms all automatic matches are correct
+
+#### Grant Role to User
+
+- [ ] `p1` - **ID**: `cpt-insightspec-usecase-grant-role`
+
+**Actor**: `cpt-insightspec-actor-tenant-admin`
+
+**Preconditions**:
+- User authenticated with Tenant Admin role
+- Target user exists in the system (has logged in via OIDC at least once)
+
+**Main Flow**:
+1. Tenant Admin navigates to role management
+2. System displays users and their current roles
+3. Tenant Admin assigns a role (Viewer, Analyst, Connector Admin, Identity Admin) to a user
+4. System validates role assignment (no conflicting constraints)
+5. System persists the role assignment
+
+**Postconditions**:
+- User has the assigned role effective immediately
+- Audit event logged with who granted what role to whom
+- Cache invalidated so new permissions take effect without delay
+
+**Alternative Flows**:
+- **User not found**: System returns error (user must log in at least once before role can be assigned)
+- **Role already assigned**: System returns conflict error
+
+#### Configure Alert Rule
+
+- [ ] `p2` - **ID**: `cpt-insightspec-usecase-configure-alert`
+
+**Actor**: `cpt-insightspec-actor-analyst`
+
+**Preconditions**:
+- User authenticated with Analyst role or higher
+- At least one metric exists in the catalog
+
+**Main Flow**:
+1. Analyst creates an alert rule: selects metric, sets threshold and comparison operator, sets evaluation interval, adds email recipients
+2. System validates that the metric is within the analyst's org visibility scope
+3. System persists the alert rule
+4. System begins periodic evaluation against the threshold
+5. When threshold is crossed, system sends email notification to recipients
+
+**Postconditions**:
+- Alert rule active and evaluating on schedule
+- Audit event logged
+
+**Alternative Flows**:
+- **Metric not visible**: System rejects rule creation (analyst cannot alert on metrics outside their org scope)
+- **Threshold never crossed**: No notifications sent; alert history shows "OK" status
+
+#### Investigate Audit Trail
+
+- [ ] `p2` - **ID**: `cpt-insightspec-usecase-investigate-audit`
+
+**Actor**: `cpt-insightspec-actor-tenant-admin`
+
+**Preconditions**:
+- User authenticated with Tenant Admin role
+- Audit events have been collected
+
+**Main Flow**:
+1. Tenant Admin opens audit log viewer
+2. Admin filters by time range, actor, action type, or resource
+3. System returns matching audit events
+4. Admin drills into a specific event to see details (what changed, before/after state)
+5. Admin exports filtered results for compliance reporting
+
+**Postconditions**:
+- Admin has visibility into who did what, when
+
+**Alternative Flows**:
+- **No matching events**: System returns empty result set
+- **Retention expired**: Events older than configured retention are not available
+
+#### Initial Platform Setup
+
+- [ ] `p1` - **ID**: `cpt-insightspec-usecase-platform-setup`
+
+**Actor**: `cpt-insightspec-actor-tenant-admin`
+
+**Preconditions**:
+- Platform deployed on Kubernetes
+- OIDC provider configured
+- HR/directory system accessible
+
+**Main Flow**:
+1. First user logs in via OIDC — system creates initial tenant and assigns Tenant Admin role (from deployment config)
+2. Tenant Admin configures HR/directory source for org tree sync
+3. System syncs organizational hierarchy
+4. Tenant Admin assigns roles to key users (Analysts, Connector Admins)
+5. Connector Admin configures first data source
+6. Data flows through ingestion pipeline into analytics layer
+7. Analysts create initial dashboards
+
+**Postconditions**:
+- Platform operational with org tree, roles, at least one data source, and dashboards
+- All setup actions recorded in audit trail
+
+**Alternative Flows**:
+- **HR/directory unreachable**: Admin seeds org tree manually; configures sync later
+- **No data sources ready**: Platform usable for org and role management; dashboards show empty state
+
+#### Monitor Transformation Pipeline
+
+- [ ] `p2` - **ID**: `cpt-insightspec-usecase-monitor-transforms`
+
+**Actor**: `cpt-insightspec-actor-connector-admin`
+
+**Preconditions**:
+- User authenticated with Connector Admin role or higher
+- At least one transformation rule configured
+
+**Main Flow**:
+1. Admin opens transform monitoring view
+2. System displays dependency graph (which connectors feed which transforms)
+3. Admin views recent transform run history (status, duration, errors)
+4. Admin identifies a failed transform run and inspects error details
+5. Admin fixes the transform rule and triggers a re-run
+6. System executes the transform and reports success
+
+**Postconditions**:
+- Transform pipeline healthy; analytics tables up to date
+
+**Alternative Flows**:
+- **Upstream sync not complete**: System shows transform blocked, waiting for connector sync
+- **Transform rule invalid**: System returns validation error before execution
 
 ## 9. Acceptance Criteria
 
@@ -676,7 +864,7 @@ Every service **MUST** expose versioned API endpoints (`/api/v1/...`) from day o
 | Redpanda | Event streaming for audit events, email requests, cache invalidation | `p1` |
 | MinIO | S3-compatible storage for CSV exports | `p2` |
 | Airbyte | Data extraction platform (connector management via API) | `p1` |
-| Kestra | Pipeline orchestration -- scheduling, retries, dbt runs (used by Connector Manager and Transform Service) | `p1` |
+| Pipeline orchestrator | Scheduling, retries, dbt runs (used by Connector Manager and Transform Service). Currently Kestra; PR #45 evaluates migration to Argo Workflows. | `p1` |
 | Customer OIDC provider | Authentication | `p1` |
 | Customer HR/directory system | Organizational hierarchy source (AD, BambooHR, Workday, etc.) | `p1` |
 | Customer SMTP server | Email delivery | `p2` |
@@ -686,7 +874,7 @@ Every service **MUST** expose versioned API endpoints (`/api/v1/...`) from day o
 - Customer has an OIDC-compliant identity provider capable of issuing JWT tokens
 - Customer has an HR or directory system that provides organizational hierarchy (Active Directory, BambooHR, Workday, or similar)
 - Customer provides an SMTP server for outbound email
-- Kubernetes cluster has sufficient resources for all bundled infrastructure (ClickHouse, MariaDB, Redis, Redpanda, MinIO, Airbyte, Kestra, monitoring stack)
+- Kubernetes cluster has sufficient resources for all bundled infrastructure (ClickHouse, MariaDB, Redis, Redpanda, MinIO, Airbyte, pipeline orchestrator, monitoring stack)
 - Airbyte API is stable enough for programmatic connection management
 - Single MariaDB instance is sufficient for metadata workloads across all services
 
@@ -702,4 +890,4 @@ Every service **MUST** expose versioned API endpoints (`/api/v1/...`) from day o
 | Customer K8s cluster variability | Helm chart may not work on all K8s distributions | Test on EKS, GKE, AKS, and k3s; document minimum resource requirements |
 | Identity resolution ambiguity | Same person may have conflicting aliases across sources; false merges corrupt analytics | Conflict detection with manual override; merge/split audit trail; conservative matching defaults |
 | dbt transform failures | Broken transform rules block Silver/Gold pipeline | Transform status monitoring via Redpanda; alerts on failure; transforms are idempotent and re-runnable |
-| Kestra API breaking changes | Transform Service integration breaks on Kestra upgrades | Abstract Kestra API behind adapter layer; pin Kestra version in Helm chart |
+| Orchestrator API breaking changes | Transform Service integration breaks on orchestrator upgrades | Abstract orchestrator API behind adapter layer; pin version in Helm chart. Orchestrator choice under evaluation (PR #45). |
