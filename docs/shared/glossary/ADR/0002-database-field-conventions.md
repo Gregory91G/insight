@@ -17,7 +17,7 @@ date: 2026-04-03
   - [Confirmation](#confirmation)
 - [Decisions](#decisions)
   - [D1: Temporal Range Naming -- effective_from / effective_to](#d1-temporal-range-naming----effectivefrom--effectiveto)
-  - [D2: tenant_id Type -- UUID](#d2-tenantid-type----uuid)
+  - [D2: Tenant Identifier -- insight_tenant_id UUID](#d2-tenant-identifier----insighttenantid-uuid)
   - [D3: Actor Attribution -- UUID Foreign Key](#d3-actor-attribution----uuid-foreign-key)
   - [D4: MariaDB Timestamp Type -- DATETIME(3)](#d4-mariadb-timestamp-type----datetime3)
   - [D5: ClickHouse Enum Strategy -- LowCardinality(String)](#d5-clickhouse-enum-strategy----lowcardinalitystring)
@@ -53,7 +53,8 @@ Adopt the six conventions documented below as mandatory for all internal Insight
 * Good, because resolves all known conflicts between PR #49 and PR #54
 * Good, because aligns with existing API Guideline and ClickHouse/MariaDB best practices
 * Good, because new services can follow the convention document without reading every existing schema
-* Bad, because PR #54 (identity-resolution DESIGN) requires updates to comply -- `valid_from/valid_to` renamed, `tenant_id` type changed, `performed_by` replaced with UUID FK
+* Bad, because PR #54 (identity-resolution DESIGN) requires updates to comply -- `valid_from/valid_to` renamed, `tenant_id` → `insight_tenant_id`, `performed_by` replaced with UUID FK
+* Bad, because PR #49 (backend DESIGN) requires updates -- `tenant_id` → `insight_tenant_id` across all table definitions
 * Bad, because conventions add constraints that may feel rigid for edge cases -- exceptions must be documented
 
 ### Confirmation
@@ -85,18 +86,19 @@ Adopt the six conventions documented below as mandatory for all internal Insight
 - Use `DATE` when business granularity is days; `DATETIME(3)` when sub-day precision is needed
 - Never use `BETWEEN` for temporal queries
 
-### D2: tenant_id Type -- UUID
+### D2: Tenant Identifier -- insight_tenant_id UUID
 
-**Problem**: PR #49 uses `UUID` for `tenant_id`; PR #54 uses `VARCHAR(100)`.
+**Problem**: PR #49 uses `tenant_id UUID`; PR #54 uses `tenant_id VARCHAR(100)`. Additionally, external systems (Azure, Salesforce) use `tenant_id` as their own field name, creating ambiguity.
 
-| Option | Storage (MariaDB) | Joinability | Consistency |
-|--------|-------------------|-------------|-------------|
-| `UUID` | 16 bytes (native) | Direct JOIN with tenant.id | Matches all-UUID convention |
-| `VARCHAR(100)` | Up to 100 bytes + length prefix | Requires type cast or inconsistent schema | Breaks UUID-everywhere convention |
+| Option | Type | Collision risk | Consistency |
+|--------|------|---------------|-------------|
+| `insight_tenant_id UUID` | UUID (16 bytes) | None -- `insight_` prefix is unambiguous | Matches connector config convention |
+| `tenant_id UUID` | UUID (16 bytes) | Collides with Azure `tenant_id`, etc. | Breaks in Bronze/Silver context |
+| `tenant_id VARCHAR(100)` | VARCHAR (up to 100 bytes) | Same collision + type inconsistency | Breaks UUID-everywhere convention |
 
-**Decision**: `tenant_id` is always `UUID NOT NULL`.
+**Decision**: `insight_tenant_id` is always `UUID NOT NULL`. See [ADR-0003](0003-insight-prefixed-tenant-id.md) for full rationale.
 
-**Rationale**: The project uses UUID for all identifiers (ADR-0001). `tenant_id` references `tenant.id` which is UUID. Using VARCHAR would break type consistency, waste storage, and require casts in JOINs.
+**Rationale**: The `insight_` prefix eliminates name collisions with source systems, aligns with the existing connector config convention (`insight_tenant_id`, `insight_source_id`), and the UUID type is consistent with ADR-0001.
 
 ### D3: Actor Attribution -- UUID Foreign Key
 

@@ -11,6 +11,7 @@ This document defines mandatory naming patterns and data types for columns that 
 |-----|----------|--------|
 | [ADR-0001](ADR/0001-uuidv7-primary-key.md) | UUIDv7 as universal primary key -- single UUID PK per table, no INT surrogates | proposed |
 | [ADR-0002](ADR/0002-database-field-conventions.md) | Database field naming and type conventions -- temporal naming, tenant_id type, actor attribution, DATETIME(3), ClickHouse patterns | proposed |
+| [ADR-0003](ADR/0003-insight-prefixed-tenant-id.md) | Use `insight_tenant_id` instead of `tenant_id` -- avoid name collision with source systems | proposed |
 
 ---
 
@@ -22,13 +23,16 @@ This document defines mandatory naming patterns and data types for columns that 
   - [2.1 Standard Tables (No Versioning)](#21-standard-tables-no-versioning)
   - [2.2 SCD Type 2 / Versioned Tables](#22-scd-type-2--versioned-tables)
   - [2.3 Why UUID-Only, Not INT Surrogate + UUID](#23-why-uuid-only-not-int-surrogate--uuid)
-- [3. Tenant Isolation](#3-tenant-isolation)
+- [3. Tenant & Source Isolation](#3-tenant--source-isolation)
+  - [3.1 Tenant Identifier -- insight_tenant_id](#31-tenant-identifier----insighttenantid)
+  - [3.2 Source Tracking Fields](#32-source-tracking-fields)
 - [4. Timestamp Fields](#4-timestamp-fields)
   - [4.1 Record Lifecycle Timestamps](#41-record-lifecycle-timestamps)
   - [4.2 Temporal Validity (Effective Ranges)](#42-temporal-validity-effective-ranges)
   - [4.3 Job / Processing Timestamps](#43-job--processing-timestamps)
   - [4.4 Event Timestamps](#44-event-timestamps)
 - [5. Foreign Key References](#5-foreign-key-references)
+  - [5.1 Self-Referential Foreign Keys (Hierarchies)](#51-self-referential-foreign-keys-hierarchies)
 - [6. Status & Enum Fields](#6-status--enum-fields)
 - [7. Actor / Audit Attribution](#7-actor--audit-attribution)
 - [8. Confidence & Scoring Fields](#8-confidence--scoring-fields)
@@ -44,7 +48,13 @@ This document defines mandatory naming patterns and data types for columns that 
   - [UUID Type](#uuid-type)
   - [DATETIME Precision](#datetime-precision)
   - [Character Sets](#character-sets)
-- [13. Anti-Patterns](#13-anti-patterns)
+- [13. Boolean Fields](#13-boolean-fields)
+- [14. Hierarchy & Tree Fields](#14-hierarchy--tree-fields)
+- [15. Soft-Delete](#15-soft-delete)
+- [16. Observation Timestamps](#16-observation-timestamps)
+- [17. String Length Tiers](#17-string-length-tiers)
+- [18. MariaDB Partial Index Workaround](#18-mariadb-partial-index-workaround)
+- [19. Anti-Patterns](#19-anti-patterns)
 
 <!-- /toc -->
 
@@ -90,7 +100,7 @@ id UUID DEFAULT generateUUIDv7()
 person_id       UUID    -- FK to person.id
 org_unit_id     UUID    -- FK to org_unit.id
 metric_id       UUID    -- FK to metric.id
-tenant_id       UUID    -- FK to tenant.id (see section 3)
+insight_tenant_id UUID   -- FK to tenant.id (see section 3)
 ```
 
 ### 2.2 SCD Type 2 / Versioned Tables
@@ -142,19 +152,40 @@ The identity-resolution DESIGN (PR #54) proposed `id INT AUTO_INCREMENT` as PK w
 
 ---
 
-## 3. Tenant Isolation
+## 3. Tenant & Source Isolation
 
-Every table in every storage system includes `tenant_id`:
+### 3.1 Tenant Identifier -- insight_tenant_id
+
+Every table in every storage system includes `insight_tenant_id`:
 
 | Storage | Column | Type | Enforcement |
 |---------|--------|------|-------------|
-| MariaDB | `tenant_id` | `UUID NOT NULL` | `SecureConn` + `AccessScope` (modkit-db) |
-| ClickHouse | `tenant_id` | `UUID` | Row-level filter on all queries |
-| Redis | key prefix | `{tenant_id}:` | Application convention |
+| MariaDB | `insight_tenant_id` | `UUID NOT NULL` | `SecureConn` + `AccessScope` (modkit-db) |
+| ClickHouse | `insight_tenant_id` | `UUID` | Row-level filter on all queries |
+| Redis | key prefix | `{insight_tenant_id}:` | Application convention |
 | Redpanda | message field | UUID (JSON) | Consumer-side filter |
-| S3 / MinIO | object prefix | `{tenant_id}/` | Application convention |
+| S3 / MinIO | object prefix | `{insight_tenant_id}/` | Application convention |
 
-`tenant_id` is always `UUID`, consistent with the project-wide ID convention. Never `VARCHAR` or `String`.
+**Why `insight_tenant_id`, not `tenant_id`?** Many external systems use `tenant_id` as their own field name (e.g., Azure `tenant_id`, Salesforce `org_id`). The `insight_` prefix eliminates ambiguity across all layers -- Bronze tables, Silver tables, internal metadata, connector configs, and API payloads. One name, zero collisions. See [ADR-0003](ADR/0003-insight-prefixed-tenant-id.md).
+
+`insight_tenant_id` is always `UUID`, consistent with the project-wide ID convention. Never `VARCHAR` or `String`.
+
+### 3.2 Source Tracking Fields
+
+Tables that contain or reference data from external source systems include source tracking fields:
+
+| Column | Type | Required | Description |
+|--------|------|----------|-------------|
+| `insight_source_id` | `UUID NOT NULL` | When source-specific | Connector instance identifier -- distinguishes between two GitLab instances for the same tenant. Propagated from Bronze layer |
+| `insight_source_type` | `VARCHAR(100) NOT NULL` | When source-specific | Source system type (e.g., `github`, `gitlab`, `bamboohr`, `jira`, `slack`). Replaces `source_system` / `source` |
+| `source_account_id` | `VARCHAR(500) NOT NULL` | When source-specific | Unique account/user ID within the source system (e.g., GitHub user ID, Jira account ID). Source-native format, not normalised |
+
+**Rules:**
+- `insight_source_id` and `insight_source_type` always appear together -- a source type without an instance ID is ambiguous when a tenant has multiple instances of the same system
+- `source_account_id` is the raw identifier from the external system -- not a UUID, not normalised. Format varies by source
+- These fields are NOT present on purely internal tables (e.g., `alert_rule`, `dashboard`, `user_role`) that have no relationship to external source data
+
+**Naming convention:** `insight_` prefix for platform-injected fields; no prefix for source-native fields (`source_account_id`).
 
 ---
 
@@ -223,14 +254,28 @@ Pattern: `{referenced_entity}_id`
 ```
 person_id           UUID        -- FK to person.id
 org_unit_id         UUID        -- FK to org_unit.id
-tenant_id           UUID        -- FK to tenant.id
+insight_tenant_id   UUID        -- FK to tenant.id (see section 3)
 metric_id           UUID        -- FK to metric.id
 connector_id        UUID        -- FK to connector_config.id
 granted_by          UUID        -- FK to person.id (actor who granted)
 manager_person_id   UUID        -- FK to person.id (with role qualifier)
+parent_id           UUID NULL   -- Self-referential FK (see section 5.1)
 ```
 
 When the same entity is referenced twice in one table, prefix with role: `source_person_id`, `target_person_id`, `manager_person_id`.
+
+### 5.1 Self-Referential Foreign Keys (Hierarchies)
+
+For tree/hierarchy structures (org units, categories):
+
+```sql
+parent_id UUID NULL   -- FK to same table's id; NULL = root node
+```
+
+**Rules:**
+- `NULL` means root of the hierarchy (no parent)
+- Application must prevent circular references -- database cannot enforce this via FK alone
+- For efficient subtree queries, consider a materialised `path` column (see [section 14](#14-hierarchy--tree-fields))
 
 ---
 
@@ -314,10 +359,10 @@ Use JSON columns sparingly for genuinely dynamic data:
 ### ORDER BY Key Design
 
 ```sql
-ORDER BY (tenant_id, event_date, entity_type, id)
+ORDER BY (insight_tenant_id, event_date, entity_type, id)
 ```
 
-- **First**: `tenant_id` — always filtered, lowest cardinality
+- **First**: `insight_tenant_id` — always filtered, lowest cardinality
 - **Middle**: date/category columns — filtered frequently, medium cardinality
 - **Last** (if needed): UUID — highest cardinality, only for deduplication
 
@@ -383,15 +428,135 @@ Use `utf8mb4` character set and `utf8mb4_unicode_ci` collation for all string co
 
 ---
 
-## 13. Anti-Patterns
+## 13. Boolean Fields
+
+Use `BOOL` (MariaDB alias for `TINYINT(1)`) with `is_` prefix:
+
+**MariaDB:**
+
+```sql
+is_enabled  BOOL NOT NULL DEFAULT TRUE,
+is_deleted  BOOL NOT NULL DEFAULT FALSE
+```
+
+**ClickHouse:**
+
+```sql
+is_deleted  UInt8 DEFAULT 0
+```
+
+**Rules:**
+- Always prefix with `is_` — `is_enabled`, `is_deleted`, `is_bot`, `is_active`
+- Always `NOT NULL` with an explicit `DEFAULT` — a boolean should never be unknown
+- ClickHouse: use `UInt8` (0/1), not `LowCardinality(String)` — booleans are not categorical strings
+- Never use `ENUM('yes','no')` or string representations
+
+---
+
+## 14. Hierarchy & Tree Fields
+
+For materialized path hierarchies (org units, categories):
+
+| Column | Type (MariaDB) | Description |
+|--------|----------------|-------------|
+| `parent_id` | `UUID NULL` | FK to same table's `id`; `NULL` = root node |
+| `path` | `TEXT NOT NULL` | Materialised path (e.g., `/company/engineering/platform`) |
+| `depth` | `INT NOT NULL DEFAULT 0` | Nesting level (root = 0) |
+
+**Rules:**
+- `path` uses `/`-delimited segments, always starts with `/`
+- `depth` is derived from `path` (number of segments - 1) — keep in sync on writes
+- Application must prevent circular references
+- Index `path` for prefix queries (`LIKE '/company/engineering/%'`)
+
+---
+
+## 15. Soft-Delete
+
+Use `deleted_at` timestamp (not boolean flag) for soft-delete:
+
+**MariaDB:**
+
+```sql
+deleted_at DATETIME(3) NULL DEFAULT NULL
+```
+
+**Rules:**
+- `NULL` means active/not deleted; non-NULL means deleted at that timestamp
+- Aligns with [API Guideline](../api-guideline/API.md) §3 which specifies `deleted_at` as optional standard field
+- Application queries add `WHERE deleted_at IS NULL` for active records
+- Prefer `deleted_at` over `is_deleted BOOL` — the timestamp provides audit value (when was it deleted?)
+- For ClickHouse, use `is_deleted UInt8 DEFAULT 0` — ClickHouse does not benefit from nullable timestamps for filtering, and `ReplacingMergeTree` uses `is_deleted` for tombstone semantics
+
+---
+
+## 16. Observation Timestamps
+
+For records that track when something was first/last observed (e.g., unmapped aliases, sync status):
+
+| Column | Type (MariaDB) | Nullable | Description |
+|--------|----------------|----------|-------------|
+| `first_observed_at` | `DATETIME(3) NOT NULL` | No | When the record was first seen |
+| `last_observed_at` | `DATETIME(3) NOT NULL` | No | When the record was most recently seen |
+
+**Rules:**
+- `first_observed_at` is immutable after insert (like `created_at`)
+- `last_observed_at` updates on every observation
+- These differ from `created_at`/`updated_at` — a record may be created once but observed many times without being "updated" (no attribute change)
+- Follow the `_at` suffix convention — not `first_seen` / `last_seen`
+
+---
+
+## 17. String Length Tiers
+
+Use consistent `VARCHAR` lengths based on content type:
+
+| Tier | Length | Use for | Examples |
+|------|--------|---------|----------|
+| **Short** | `VARCHAR(50)` | Type codes, enum-like values, short identifiers | `alias_type`, `assignment_type`, `source` |
+| **Medium** | `VARCHAR(100)` | System names, rule names, attribute names | `insight_source_type`, `attribute_name`, `condition_type` |
+| **Standard** | `VARCHAR(255)` | Human-readable names, display values | `display_name`, `name`, `role`, `location` |
+| **Long** | `VARCHAR(500)` | Emails, URLs, external identifiers, user agents | `alias_value`, `email`, `source_account_id`, `actor_user_agent` |
+| **Unbounded** | `TEXT` | Paths, free-form text, reasons, descriptions | `path`, `reason`, `description` |
+
+**Rules:**
+- Pick the tier that fits the content, not the "maximum possible length"
+- `TEXT` should only be used when length is genuinely unpredictable
+- Do NOT use `VARCHAR(500)` for a field that will always be under 50 characters
+- ClickHouse: always use `String` (no length limit) or `FixedString(N)` for fixed-width codes
+
+---
+
+## 18. MariaDB Partial Index Workaround
+
+MariaDB does not support PostgreSQL-style partial unique indexes (`WHERE valid_to IS NULL`). Use a generated column:
+
+```sql
+-- Add to SCD2 / versioned tables
+is_current TINYINT(1) GENERATED ALWAYS AS (
+    CASE WHEN effective_to IS NULL THEN 1 ELSE NULL END
+) STORED,
+
+UNIQUE KEY idx_person_current (person_id, is_current)
+```
+
+This ensures only one row per `person_id` can have `effective_to IS NULL`. When `effective_to` is set, `is_current` becomes `NULL`, and `UNIQUE` ignores NULLs.
+
+---
+
+## 19. Anti-Patterns
 
 | Anti-pattern | Why | Do instead |
 |-------------|-----|-----------|
 | `INT AUTO_INCREMENT` PK + separate UUID column | Unnecessary complexity at Insight scale; two IDs to manage | `id UUID DEFAULT uuid_v7() PRIMARY KEY` |
-| `tenant_id VARCHAR(100)` | Inconsistent with project UUID convention; larger storage | `tenant_id UUID NOT NULL` |
+| Bare `tenant_id` | Collides with source system field names (e.g., Azure `tenant_id`) | `insight_tenant_id UUID NOT NULL` |
+| `tenant_id VARCHAR(100)` | Inconsistent with project UUID convention; larger storage | `insight_tenant_id UUID NOT NULL` |
+| `source_system VARCHAR` / bare `source` | Ambiguous naming; no instance-level granularity | `insight_source_type` + `insight_source_id` pair |
 | `performed_by VARCHAR(100)` (username string) | Breaks on rename; cannot join to person table | `actor_person_id UUID` (FK to person.id) |
 | `valid_from` / `valid_to` or `owned_from` / `owned_until` | Multiple naming conventions for the same concept | `effective_from` / `effective_to` everywhere |
+| `first_seen` / `last_seen` (no `_at` suffix) | Breaks timestamp naming convention | `first_observed_at` / `last_observed_at` |
+| `is_deleted BOOL` in MariaDB | Loses "when deleted" information | `deleted_at DATETIME(3) NULL` |
 | `TIMESTAMP` for MariaDB columns | Implicit timezone conversion; 2038 limit | `DATETIME(3)` |
-| UUID first in ClickHouse `ORDER BY` | Destroys data skipping and compression | `tenant_id` first, UUID last |
+| UUID first in ClickHouse `ORDER BY` | Destroys data skipping and compression | `insight_tenant_id` first, UUID last |
 | `Nullable(String)` in ClickHouse | Storage overhead from null-mask column | Empty string `''` as default |
 | `Enum8`/`Enum16` in ClickHouse | Hard to evolve (adding values requires ALTER) | `LowCardinality(String)` |
