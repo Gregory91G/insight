@@ -60,7 +60,7 @@ The Insight Backend is the API and business logic tier of the Insight platform. 
 
 The backend is built on **cyberfabric-core ModKit** -- a modular Rust microservice framework that provides authentication (OIDC/JWT), authorization (AuthZEN 1.0), multi-tenant data isolation, OData query capabilities, RFC 9457 error handling, and database access patterns out of the box. Each microservice is a ModKit module with its own database, its own API version, and its own client SDK crate.
 
-The system is deployed as a **standalone product** on Kubernetes via a single Helm chart. It has no dependency on any specific cloud provider, secret management infrastructure, or identity provider beyond standard OIDC.
+The system is deployed as a **standalone product** on Kubernetes via per-service Helm charts managed by ArgoCD. It has no dependency on any specific cloud provider, secret management infrastructure, or identity provider beyond standard OIDC.
 
 ### 1.2 Architecture Drivers
 
@@ -1216,7 +1216,7 @@ Tenant Admin can trigger Silver/Gold rebuild from Bronze via Connector Manager â
 
 ## 6. CI/CD
 
-**Repository structure**: Monorepo -- all services, shared crates, Helm chart, and frontend live in a single repository (`insight`), consistent with cyberfabric-core conventions.
+**Repository structure**: Monorepo -- all backend services, shared crates, and Helm charts live in a single repository (`insight`), consistent with cyberfabric-core conventions. Frontend (React SPA) lives in a separate repository.
 
 ```text
 insight/

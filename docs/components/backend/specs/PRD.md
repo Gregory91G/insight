@@ -39,6 +39,14 @@ date: 2026-03-31
   - [7.1 Public API Surface](#71-public-api-surface)
   - [7.2 External Integration Contracts](#72-external-integration-contracts)
 - [8. Use Cases](#8-use-cases)
+  - [8.1 Analytics Consumption](#81-analytics-consumption)
+  - [8.2 Connector Operations](#82-connector-operations)
+  - [8.3 Identity Resolution](#83-identity-resolution)
+  - [8.4 Access Control Configuration](#84-access-control-configuration)
+  - [8.5 Alerting](#85-alerting)
+  - [8.6 Compliance Audit](#86-compliance-audit)
+  - [8.7 Platform Setup](#87-platform-setup)
+  - [8.8 Transformation Monitoring](#88-transformation-monitoring)
 - [9. Acceptance Criteria](#9-acceptance-criteria)
 - [10. Dependencies](#10-dependencies)
 - [11. Assumptions](#11-assumptions)
@@ -70,13 +78,15 @@ The product is deployed as a standalone installation on customer Kubernetes clus
 
 | Term | Definition |
 |------|------------|
+| Workspace | The top-level tenant isolation boundary; all data, configuration, and access policies are scoped to a workspace |
+| Connector | A configured integration with an external data source, managed through the Airbyte platform |
 | Silver layer | Unified ClickHouse tables with standardized schemas across data sources |
 | Gold layer | Aggregated ClickHouse tables with computed business metrics |
+| Golden Record | The canonical, deduplicated person record produced by identity resolution, representing a single real individual across all source systems |
 | Org unit | A node in the organizational hierarchy (team, department, division) |
 | Follow-the-unit-strict | Visibility policy where data access follows org membership periods |
-| KEK | Key Encryption Key -- master key provided at deployment, wraps per-tenant DEKs |
-| DEK | Data Encryption Key -- per-tenant key that encrypts secret values |
-| Envelope encryption | Encryption pattern where data keys are themselves encrypted by a master key |
+| Per-tenant encryption isolation | Security property ensuring that credential compromise in one tenant cannot expose credentials of another tenant |
+| Business Alert | A user-defined rule that monitors a metric against a threshold and triggers a notification when breached |
 
 ## 2. Actors
 
@@ -634,225 +644,250 @@ All REST APIs **MUST** follow the project API conventions defined in [DNA REST A
 
 ## 8. Use Cases
 
-#### View Org-Scoped Dashboard
+### 8.1 Analytics Consumption
+
+#### Dashboard Data Retrieval
 
 - [ ] `p1` - **ID**: `cpt-insightspec-usecase-view-dashboard`
 
 **Actor**: `cpt-insightspec-actor-viewer`
 
 **Preconditions**:
-- User authenticated via OIDC
-- User has Viewer role or higher
-- Dashboard exists with chart configurations
+- User is authenticated via OIDC
+- User has Viewer role or higher with at least one org-unit scope grant
+- Connectors are configured and syncing data for the relevant sources
 
 **Main Flow**:
-1. User navigates to dashboard
-2. System verifies user identity and role permissions
-3. System determines visible org units and applicable time ranges
-4. System queries analytics data scoped to user's visibility
-5. System returns filtered metrics
-6. Frontend renders charts
+1. Viewer opens a dashboard in the frontend
+2. Frontend sends analytics query to the Backend with the user's access token
+3. Backend validates the OIDC token and resolves the user's role and org-unit scope grants
+4. Backend constructs the analytics query with automatic scope filters limiting results to the granted org units and membership time ranges
+5. Backend executes the query
+6. Backend returns the filtered, aggregated results to the frontend
+7. Frontend renders charts
 
-**Postconditions**:
-- User sees metrics only from their visible org subtree and membership periods
-- Audit event logged
+**Postconditions**: Viewer sees analytics data for only the people in their granted org units and membership periods. An audit event is recorded for the data access.
 
 **Alternative Flows**:
-- **No role assigned**: System returns 403 Forbidden
-- **No org membership**: System returns empty dataset
+- **Expired token**: Backend returns 401. Frontend redirects to OIDC provider for re-authentication.
+- **No scope grants**: Backend returns an empty result set with 200 (not an error -- user is authenticated but has no data visibility).
+- **Data store unavailable**: Backend returns 503 with retry-after header.
 
-#### Configure New Connector
+#### Analytics Data Export
+
+- [ ] `p2` - **ID**: `cpt-insightspec-usecase-analytics-export`
+
+**Actor**: `cpt-insightspec-actor-analyst`
+
+**Preconditions**:
+- User is authenticated with Analyst role or higher
+- User has org-unit scope grants covering the target data
+
+**Main Flow**:
+1. Analyst selects a date range and metric set for export
+2. Frontend sends export request to the Backend
+3. Backend validates authorization and scope
+4. Backend executes the query with scope filters applied
+5. Backend formats results as CSV, stores on S3-compatible storage, and returns a download link
+6. Analyst downloads the file for offline analysis
+
+**Postconditions**: Export file contains only data within the user's authorized scope. Audit event records the export operation including row count and filters applied.
+
+**Alternative Flows**:
+- **Large result set**: If the query would return more than 100,000 rows, the Backend returns a 413 response suggesting the user narrow the date range or scope.
+
+### 8.2 Connector Operations
+
+#### Onboarding a New Data Source
 
 - [ ] `p1` - **ID**: `cpt-insightspec-usecase-configure-connector`
 
 **Actor**: `cpt-insightspec-actor-connector-admin`
 
 **Preconditions**:
-- User authenticated with Connector Admin role
+- User is authenticated with Connector Admin role
+- The target source system's API credentials are available
 
 **Main Flow**:
-1. Admin creates connector configuration (source type, parameters, schedule)
-2. Admin provides API credentials
-3. System stores credentials encrypted
-4. System registers the connection with the data extraction platform
-5. Admin triggers initial sync
-6. System monitors sync status
+1. Connector Admin selects the connector type (e.g., GitHub, Jira, BambooHR) from available templates
+2. Connector Admin provides connection parameters (API URL, credentials, sync scope)
+3. Backend validates the connection parameters by performing a test connection to the source system
+4. Backend encrypts credentials with tenant-scoped encryption and creates the connection
+5. Backend records the connector creation in the audit trail
+6. Connector Admin triggers an initial sync
+7. Connector Admin monitors sync progress through the connector status API
 
-**Postconditions**:
-- Connector configured and syncing
-- Credentials stored encrypted
-- Audit events logged
+**Postconditions**: New connector is configured and actively syncing. Credentials stored encrypted. Audit trail records who created it and when.
 
 **Alternative Flows**:
-- **Extraction platform unreachable**: System retries, returns error after max attempts
-- **Invalid credentials format**: System returns validation errors
+- **Invalid credentials**: Test connection fails. Backend returns validation error with specific failure reason (authentication failed, endpoint unreachable, insufficient permissions). No connector is created.
+- **Extraction platform unreachable**: System retries with backoff, returns 503 after max attempts.
+- **Duplicate connector**: If a connector for the same source instance already exists, Backend returns conflict error.
 
-#### Review Identity Resolution
+### 8.3 Identity Resolution
+
+#### Reviewing and Resolving Identity Conflicts
 
 - [ ] `p1` - **ID**: `cpt-insightspec-usecase-review-identity`
 
 **Actor**: `cpt-insightspec-actor-identity-admin`
 
 **Preconditions**:
-- User authenticated with Identity Admin role
-- Data from multiple sources has been ingested
+- Identity resolution has run and produced pending match candidates
+- User is authenticated with Identity Admin role
 
 **Main Flow**:
-1. Admin opens identity resolution view
-2. System displays list of resolved persons with alias count per source
-3. Admin selects a person to see all linked aliases (emails, usernames, employee IDs)
-4. Admin reviews unresolved conflicts (ambiguous matches)
-5. Admin merges two person records that represent the same individual
-6. System updates all analytics references to use the merged person_id
+1. Identity Admin queries the pending identity matches, which returns pairs of records with confidence scores
+2. Identity Admin reviews a pending match, comparing the two records' attributes (name, email, department, source systems)
+3. Identity Admin confirms the match, instructing the Backend to merge the two records into a single golden record
+4. Backend merges the records and updates all downstream references
+5. Backend records the merge decision in the audit trail, including the administrator's identity and the merged record IDs
 
-**Postconditions**:
-- Person records merged with full audit trail
-- Analytics queries reflect corrected identity
+**Postconditions**: The two records are merged into one golden record. All analytics data referencing either original record now points to the merged record. Audit trail records the decision.
 
 **Alternative Flows**:
-- **False merge detected**: Admin splits a person record back into two separate persons
-- **No conflicts**: Admin confirms all automatic matches are correct
+- **Reject match**: Administrator determines the records are different people. Backend marks the pair as "rejected" so it is not proposed again.
+- **Split existing record**: Administrator discovers a golden record that incorrectly merged two people. They initiate a split operation, specifying which source identities belong to each resulting record.
 
-#### Grant Role to User
+### 8.4 Access Control Configuration
+
+#### Granting Org-Scoped Access
 
 - [ ] `p1` - **ID**: `cpt-insightspec-usecase-grant-role`
 
 **Actor**: `cpt-insightspec-actor-tenant-admin`
 
 **Preconditions**:
-- User authenticated with Tenant Admin role
-- Target user exists in the system (has logged in via OIDC at least once)
+- User is authenticated with Tenant Admin role
+- The org tree has been synced from the HR system
 
 **Main Flow**:
-1. Tenant Admin navigates to role management
-2. System displays users and their current roles
-3. Tenant Admin assigns a role (Viewer, Analyst, Connector Admin, Identity Admin) to a user
-4. System validates role assignment (no conflicting constraints)
-5. System persists the role assignment
+1. Tenant Admin searches for the target user by name or email
+2. Tenant Admin assigns a role (Viewer, Analyst, Connector Admin, or Identity Admin) to the user
+3. Tenant Admin browses the org tree and selects the org units the user should have visibility into
+4. Backend creates the role assignment with the specified org-unit scope grants
+5. Backend records the grant in the audit trail
 
-**Postconditions**:
-- User has the assigned role effective immediately
-- Audit event logged with who granted what role to whom
-- Cache invalidated so new permissions take effect without delay
+**Postconditions**: The target user can now access data and features per their assigned role, scoped to the granted org units. Audit trail records who made the grant, to whom, and which org units were included.
 
 **Alternative Flows**:
-- **User not found**: System returns error (user must log in at least once before role can be assigned)
-- **Role already assigned**: System returns conflict error
+- **User not yet logged in**: Backend allows creating a pre-provisioned role assignment that activates upon the user's first OIDC login.
+- **Conflicting grants**: If the user already has a role assignment, Backend returns the existing assignment details and allows the administrator to modify it.
 
-#### Configure Alert Rule
+### 8.5 Alerting
+
+#### Configuring a Metric Alert
 
 - [ ] `p2` - **ID**: `cpt-insightspec-usecase-configure-alert`
 
 **Actor**: `cpt-insightspec-actor-analyst`
 
 **Preconditions**:
-- User authenticated with Analyst role or higher
-- At least one metric exists in the catalog
+- User is authenticated with a role that permits alert creation (Analyst or Tenant Admin)
+- User has org-unit scope grants for the data the alert will monitor
 
 **Main Flow**:
-1. Analyst creates an alert rule: selects metric, sets threshold and comparison operator, sets evaluation interval, adds email recipients
-2. System validates that the metric is within the analyst's org visibility scope
-3. System persists the alert rule
-4. System begins periodic evaluation against the threshold
-5. When threshold is crossed, system sends email notification to recipients
+1. Analyst selects a metric (e.g., "Average PR Review Time") and an org-unit scope
+2. Analyst defines a threshold condition (e.g., "above 48 hours") and evaluation frequency (e.g., daily)
+3. Analyst specifies notification recipients (email addresses)
+4. Backend validates that the user has visibility into the specified org-unit scope
+5. Backend creates the alert rule
 
-**Postconditions**:
-- Alert rule active and evaluating on schedule
-- Audit event logged
+**Postconditions**: Alert rule is active. The Backend will evaluate it at the configured frequency and send email notifications when the threshold is breached.
 
 **Alternative Flows**:
-- **Metric not visible**: System rejects rule creation (analyst cannot alert on metrics outside their org scope)
-- **Threshold never crossed**: No notifications sent; alert history shows "OK" status
+- **Scope exceeds grants**: Backend rejects the request with an authorization error (user cannot alert on data outside their org scope).
 
-#### Investigate Audit Trail
+### 8.6 Compliance Audit
 
-- [ ] `p2` - **ID**: `cpt-insightspec-usecase-investigate-audit`
+#### Investigating Data Access for a Specific Employee
+
+- [ ] `p1` - **ID**: `cpt-insightspec-usecase-investigate-audit`
 
 **Actor**: `cpt-insightspec-actor-tenant-admin`
 
 **Preconditions**:
-- User authenticated with Tenant Admin role
-- Audit events have been collected
+- Tenant Admin is authenticated with Tenant Admin role
+- Audit trail is operational
 
 **Main Flow**:
-1. Tenant Admin opens audit log viewer
-2. Admin filters by time range, actor, action type, or resource
-3. System returns matching audit events
-4. Admin drills into a specific event to see details (what changed, before/after state)
-5. Admin exports filtered results for compliance reporting
+1. Tenant Admin queries the audit API with filters: target resource = specific employee's golden record ID, time range = last 90 days
+2. Backend returns all matching audit events (analytics queries that included this person's data, identity resolution actions on this person's record, scope grants that included this person's org unit)
+3. Tenant Admin reviews the events to verify all access was authorized and appropriate
 
-**Postconditions**:
-- Admin has visibility into who did what, when
+**Postconditions**: Tenant Admin has a complete record of all system interactions involving the specified employee's data.
 
 **Alternative Flows**:
-- **No matching events**: System returns empty result set
-- **Retention expired**: Events older than configured retention are not available
+- **No matching events**: Backend returns an empty result set. This is a valid outcome (the employee's data was not accessed in the time range).
+- **Retention expired**: Events older than configured retention are not available.
 
-#### Initial Platform Setup
+### 8.7 Platform Setup
+
+#### Initial Platform Configuration
 
 - [ ] `p1` - **ID**: `cpt-insightspec-usecase-platform-setup`
 
 **Actor**: `cpt-insightspec-actor-tenant-admin`
 
 **Preconditions**:
-- Platform deployed on Kubernetes
-- OIDC provider configured
-- HR/directory system accessible
+- Insight Backend is deployed on the customer's Kubernetes cluster
+- OIDC provider is configured and reachable
+- SMTP service is configured
 
 **Main Flow**:
-1. First user logs in via OIDC — system creates initial tenant and assigns Tenant Admin role (from deployment config)
-2. Tenant Admin configures HR/directory source for org tree sync
-3. System syncs organizational hierarchy
-4. Tenant Admin assigns roles to key users (Analysts, Connector Admins)
-5. Connector Admin configures first data source
-6. Data flows through ingestion pipeline into analytics layer
-7. Analysts create initial dashboards
+1. Tenant Admin authenticates via OIDC for the first time
+2. Backend detects this is the first admin user and assigns the Tenant Administrator role
+3. Tenant Admin configures the HR system connector to sync the org tree
+4. Tenant Admin waits for the initial org tree sync to complete
+5. Tenant Admin configures data source connectors (Git, task tracking, communication, etc.)
+6. Tenant Admin defines role assignments and org-unit scope grants for other users
+7. Tenant Admin configures initial alert rules for key metrics
 
-**Postconditions**:
-- Platform operational with org tree, roles, at least one data source, and dashboards
-- All setup actions recorded in audit trail
+**Postconditions**: Platform is fully configured with connectors syncing, RBAC policies defined, and alerts active. All configuration steps are recorded in the audit trail.
 
 **Alternative Flows**:
-- **HR/directory unreachable**: Admin seeds org tree manually; configures sync later
-- **No data sources ready**: Platform usable for org and role management; dashboards show empty state
+- **HR sync fails**: Administrator can still proceed with connector configuration but cannot assign org-unit scopes until the org tree is available.
 
-#### Monitor Transformation Pipeline
+### 8.8 Transformation Monitoring
+
+#### Diagnosing Stale Dashboard Data
 
 - [ ] `p2` - **ID**: `cpt-insightspec-usecase-monitor-transforms`
 
 **Actor**: `cpt-insightspec-actor-connector-admin`
 
 **Preconditions**:
-- User authenticated with Connector Admin role or higher
-- At least one transformation rule configured
+- An analyst reports that dashboard data appears stale
+- User is authenticated with Connector Admin role or higher
 
 **Main Flow**:
-1. Admin opens transform monitoring view
-2. System displays dependency graph (which connectors feed which transforms)
-3. Admin views recent transform run history (status, duration, errors)
-4. Admin identifies a failed transform run and inspects error details
-5. Admin fixes the transform rule and triggers a re-run
-6. System executes the transform and reports success
+1. Connector Admin checks connector status to verify data is arriving from source systems
+2. Connectors show recent successful syncs, so the issue is not in ingestion
+3. Connector Admin checks transformation execution status
+4. Backend shows that the latest transformation run failed with an error
+5. Connector Admin reviews the error details and identifies the root cause
+6. Connector Admin triggers a manual transformation re-run
 
-**Postconditions**:
-- Transform pipeline healthy; analytics tables up to date
+**Postconditions**: Root cause identified. After the transformation re-runs successfully, dashboard data will be current.
 
 **Alternative Flows**:
-- **Upstream sync not complete**: System shows transform blocked, waiting for connector sync
-- **Transform rule invalid**: System returns validation error before execution
+- **Connector is the issue**: If step 1 reveals a connector has not synced recently, the administrator investigates the connector error details instead.
+- **Transform rule invalid**: System returns validation error before execution.
 
 ## 9. Acceptance Criteria
 
-- [ ] Authenticated user can query analytics data scoped to their org unit and membership period
-- [ ] Tenant A cannot access Tenant B data through any API endpoint
-- [ ] Connector admin can configure, trigger, and monitor a data source sync end-to-end
-- [ ] Business alert fires email within 10 minutes of threshold breach
-- [ ] Audit trail captures all data access and configuration changes with queryable retention
-- [ ] Identity resolution maps aliases from multiple sources into a single person golden record
-- [ ] dbt transform rules can be configured and triggered, producing Silver step 2 and Gold tables
-- [ ] Database migrations run as K8s Jobs before pod rollout with zero-downtime deployments
-- [ ] System deploys on a fresh Kubernetes cluster via single `helm install` command
-- [ ] System recovers from dependency failures (ClickHouse, MariaDB, LDAP) within retry budget without data loss
+- [ ] `cpt-insightspec-fr-be-analytics-read`, `cpt-insightspec-fr-be-visibility-policy`: Authenticated user can query analytics data scoped to their org unit and membership period. A user with scope grants for Department A **MUST NOT** see data for Department B employees in any API response.
+- [ ] `cpt-insightspec-nfr-be-tenant-isolation`: Tenant A cannot access Tenant B data through any API endpoint. Zero cross-tenant data leaks verified via automated cross-tenant access tests.
+- [ ] `cpt-insightspec-fr-be-connector-crud`, `cpt-insightspec-fr-be-secret-management`: A Connector Admin can complete the full connector onboarding flow (create, test connection, initial sync) through the API without direct Airbyte access.
+- [ ] `cpt-insightspec-fr-be-business-alerts`, `cpt-insightspec-fr-be-email-delivery`: Business alert fires email within 10 minutes of threshold breach.
+- [ ] `cpt-insightspec-fr-be-audit-trail`: Audit trail captures all data access and configuration changes with queryable retention. Audit records are immutable -- no API or internal function can modify or delete an audit event after creation.
+- [ ] `cpt-insightspec-fr-be-identity-resolution-service`: Identity resolution maps aliases from multiple sources into a single person golden record. Merge and split operations propagate to all downstream analytics data within one transformation cycle.
+- [ ] `cpt-insightspec-fr-be-transform-rules`: Transformation rules can be configured and triggered, producing unified and metric tables with observable status.
+- [ ] `cpt-insightspec-fr-be-forward-only-migrations`: Database migrations execute automatically during deployment with zero-downtime rolling deployments.
+- [ ] `cpt-insightspec-fr-be-health-checks`: Health check endpoint accurately reports the status of all critical dependencies and distinguishes liveness from readiness.
+- [ ] `cpt-insightspec-fr-be-oidc-auth`, `cpt-insightspec-fr-be-rbac`: All API requests are authenticated via OIDC and authorized via RBAC. Unauthenticated or unauthorized requests are rejected with appropriate HTTP status codes.
+- [ ] `cpt-insightspec-fr-be-audit-trail`: All configuration changes (connector CRUD, RBAC grants, alert rules) produce audit trail entries with complete actor and action details.
+- [ ] `cpt-insightspec-nfr-be-retry-resilience`: System recovers from dependency failures (ClickHouse, MariaDB, LDAP) within retry budget without data loss.
 
 ## 10. Dependencies
 
