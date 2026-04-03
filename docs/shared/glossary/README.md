@@ -20,7 +20,7 @@ This document defines mandatory naming patterns and data types for columns that 
 - [Architecture Decision Records](#architecture-decision-records)
 - [1. General Rules](#1-general-rules)
 - [2. Identifiers & Primary Keys](#2-identifiers--primary-keys)
-  - [2.1 Standard Tables (No Versioning)](#21-standard-tables-no-versioning)
+  - [2.1 Internal Entity Tables](#21-internal-entity-tables)
   - [2.2 Why UUID-Only, Not INT Surrogate + UUID](#22-why-uuid-only-not-int-surrogate--uuid)
 - [3. Tenant & Source Isolation](#3-tenant--source-isolation)
   - [3.1 Tenant Identifier -- insight_tenant_id](#31-tenant-identifier----insighttenantid)
@@ -70,7 +70,7 @@ This document defines mandatory naming patterns and data types for columns that 
 | Rule | Convention | Source |
 |------|-----------|--------|
 | Column naming | `snake_case`, lowercase | [API Guideline](../api-guideline/API.md) §4 |
-| Table naming | `snake_case`, lowercase, singular (`person`, `alert_rule`) | Project convention |
+| Table naming | `snake_case`, lowercase, **plural** (`persons`, `alert_rules`, `org_units`) | Project convention |
 | ID format | UUIDv7 (time-ordered) | [API Guideline](../api-guideline/README.md) §3 |
 | Timestamp format | ISO-8601 UTC with milliseconds in JSON; DB-native types in storage | [API Guideline](../api-guideline/API.md) §3 |
 | Nullability | Avoid unless null carries distinct semantic meaning | ClickHouse best practice; MariaDB convention |
@@ -79,9 +79,9 @@ This document defines mandatory naming patterns and data types for columns that 
 
 ## 2. Identifiers & Primary Keys
 
-### 2.1 Standard Tables (No Versioning)
+### 2.1 Internal Entity Tables
 
-Every table has a single `id` column as primary key:
+Every **internal entity table** (MariaDB or ClickHouse) has a single `id` column as primary key or unique identifier:
 
 **MariaDB:**
 
@@ -91,21 +91,28 @@ id UUID NOT NULL DEFAULT uuid_v7() PRIMARY KEY
 
 > MariaDB 10.7+ native `UUID` type stores 16 bytes internally. Always use `uuid_v7()` (time-ordered) to preserve insert ordering and minimise InnoDB page splits.
 
-**ClickHouse:**
+**ClickHouse (internal tables, e.g., audit events):**
 
 ```sql
 id UUID DEFAULT generateUUIDv7()
 ```
 
-> In ClickHouse `id` is a column, not a PK in the RDBMS sense. It should appear **last** in the `ORDER BY` key (if at all) — never first. See [section 6](#6-clickhouse-specific-conventions).
+> In ClickHouse `id` is not a PK in the RDBMS sense — it serves as a unique row identifier for filtering and joining. It should appear **last** in the `ORDER BY` key (if at all). See [section 6](#6-clickhouse-specific-conventions).
+
+**This applies to**: all tables that represent Insight's own domain entities and internal data — `persons`, `aliases`, `org_units`, `alert_rules`, `dashboards`, `metrics`, `connector_configs`, `tenant_keys`, `secrets`, audit events, email delivery logs, etc. This includes both MariaDB and ClickHouse tables owned by Insight services.
+
+**This does NOT apply to**:
+- **Bronze tables** — raw data from external sources via Airbyte; schema is source-native, no UUID PK
+- **Silver tables** — unified analytical tables in ClickHouse (`class_commits`, `class_people`, etc.); use composite `ORDER BY` keys, not UUID PKs
+- **Gold tables** — aggregated metrics in ClickHouse; same as Silver
 
 **Foreign key references** use the pattern `{entity}_id`:
 
 ```sql
-person_id       UUID    -- FK to person.id
-org_unit_id     UUID    -- FK to org_unit.id
-metric_id       UUID    -- FK to metric.id
-insight_tenant_id UUID   -- FK to tenant.id (see section 3)
+person_id         UUID    -- FK to persons.id
+org_unit_id       UUID    -- FK to org_units.id
+metric_id         UUID    -- FK to metrics.id
+insight_tenant_id UUID    -- FK to tenants.id (see section 3)
 ```
 
 ### 2.2 Why UUID-Only, Not INT Surrogate + UUID
@@ -158,7 +165,7 @@ Tables that contain or reference data from external source systems include sourc
 **Rules:**
 - `insight_source_id` and `insight_source_type` always appear together -- a source type without an instance ID is ambiguous when a tenant has multiple instances of the same system
 - `source_account_id` is the raw identifier from the external system -- not a UUID, not normalised. Format varies by source
-- These fields are NOT present on purely internal tables (e.g., `alert_rule`, `dashboard`, `user_role`) that have no relationship to external source data
+- These fields are NOT present on purely internal tables (e.g., `alert_rules`, `dashboards`, `user_roles`) that have no relationship to external source data
 
 **Naming convention:** `insight_` prefix for platform-injected fields; no prefix for source-native fields (`source_account_id`).
 
@@ -399,7 +406,7 @@ Use consistent `VARCHAR` lengths based on content type:
 | Bare `tenant_id` | Collides with source system field names (e.g., Azure `tenant_id`) | `insight_tenant_id UUID NOT NULL` |
 | `tenant_id VARCHAR(100)` | Inconsistent with project UUID convention; larger storage | `insight_tenant_id UUID NOT NULL` |
 | `source_system VARCHAR` / bare `source` | Ambiguous naming; no instance-level granularity | `insight_source_type` + `insight_source_id` pair |
-| `performed_by VARCHAR(100)` (username string) | Breaks on rename; cannot join to person table | `actor_person_id UUID` (FK to person.id) |
+| `performed_by VARCHAR(100)` (username string) | Breaks on rename; cannot join to persons table | `actor_person_id UUID` (FK to persons.id) |
 | `valid_from` / `valid_to` or `owned_from` / `owned_until` | Multiple naming conventions for the same concept | `effective_from` / `effective_to` everywhere |
 | `first_seen` / `last_seen` (no `_at` suffix) | Breaks timestamp naming convention | `first_observed_at` / `last_observed_at` |
 | `is_deleted BOOL` in MariaDB | Loses "when deleted" information | `deleted_at DATETIME(3) NULL` |
@@ -442,7 +449,7 @@ Concrete enum values will be defined per domain.
 
 | Column | Type (MariaDB) | Description |
 |--------|----------------|-------------|
-| `actor_person_id` | `UUID NOT NULL` | FK to person.id -- who performed the action |
+| `actor_person_id` | `UUID NOT NULL` | FK to persons.id -- who performed the action |
 | `actor_ip` | `VARCHAR(45)` | Client IP (IPv4 or IPv6) |
 | `actor_user_agent` | `VARCHAR(500)` | Client User-Agent |
 

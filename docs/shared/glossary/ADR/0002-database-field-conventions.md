@@ -102,16 +102,16 @@ Adopt the six conventions documented below as mandatory for all internal Insight
 
 ### D3: Actor Attribution -- UUID Foreign Key
 
-**Problem**: PR #49 uses `actor_person_id UUID` (FK to person.id) for audit attribution; PR #54 uses `performed_by VARCHAR(100)` storing a username string.
+**Problem**: PR #49 uses `actor_person_id UUID` (FK to persons.id) for audit attribution; PR #54 uses `performed_by VARCHAR(100)` storing a username string.
 
 | Option | Joinability | Resilience to rename | Storage |
 |--------|-------------|---------------------|---------|
-| `actor_person_id UUID` (FK) | Direct JOIN to person | Immune -- UUID is stable | 16 bytes |
+| `actor_person_id UUID` (FK) | Direct JOIN to persons | Immune -- UUID is stable | 16 bytes |
 | `performed_by VARCHAR(100)` | Requires lookup by username | Breaks if username changes | Up to 100 bytes |
 
 **Decision**: Always use UUID FK to `person.id` for actor attribution.
 
-**Rationale**: Usernames and emails change. A UUID FK is stable, joinable, and consistent with the all-UUID convention. Column name follows the `{role}_{entity}_id` pattern: `actor_person_id`, `granted_by`, `resolved_by` (all UUID FKs to person.id).
+**Rationale**: Usernames and emails change. A UUID FK is stable, joinable, and consistent with the all-UUID convention. Column name follows the `{role}_{entity}_id` pattern: `actor_person_id`, `granted_by`, `resolved_by` (all UUID FKs to persons.id).
 
 **Naming**:
 - `actor_person_id` -- who performed the action (audit events)
