@@ -54,7 +54,7 @@ export APP__modules__oidc-authn-plugin__config__audience=api://insight
 | JWT claim | SecurityContext field | Notes |
 |-----------|---------------------|-------|
 | `sub` | `subject_id` | Hashed to UUID v5 (OIDC subs are often not UUIDs) |
-| `scp` (array) or `scope` (string) | `token_scopes` | Okta uses `scp`, standard OIDC uses `scope`. Falls back to `["*"]` |
+| `scp` (array) or `scope` (string) | `token_scopes` | Okta uses `scp`, standard OIDC uses `scope`. Empty if neither present (authz layer decides) |
 | `{tenant_claim}` | `subject_tenant_id` | Configurable claim name. Parsed as UUID. Falls back to nil UUID |
 
 ## Provider setup
