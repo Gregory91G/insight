@@ -27,6 +27,9 @@
   - [7.1 Public API Surface](#71-public-api-surface)
   - [7.2 External Integration Contracts](#72-external-integration-contracts)
 - [8. Use Cases](#8-use-cases)
+  - [Golden Record Assembly from Source Update](#golden-record-assembly-from-source-update)
+  - [Resolve Person-Attribute Conflict](#resolve-person-attribute-conflict)
+  - [Ingest Person Availability](#ingest-person-availability)
 - [9. Acceptance Criteria](#9-acceptance-criteria)
 - [10. Dependencies](#10-dependencies)
 - [11. Assumptions](#11-assumptions)
@@ -420,7 +423,7 @@ The system **MUST** return a single person record (GET /persons/:id) in < 50 ms 
 
 ## 8. Use Cases
 
-#### Golden Record Assembly from Source Update
+### Golden Record Assembly from Source Update
 
 - [ ] `p1` - **ID**: `cpt-person-usecase-golden-record-assembly`
 
@@ -449,7 +452,7 @@ The system **MUST** return a single person record (GET /persons/:id) in < 50 ms 
 
 ---
 
-#### Resolve Person-Attribute Conflict
+### Resolve Person-Attribute Conflict
 
 - [ ] `p2` - **ID**: `cpt-person-usecase-resolve-conflict`
 
@@ -478,7 +481,7 @@ The system **MUST** return a single person record (GET /persons/:id) in < 50 ms 
 
 ---
 
-#### Ingest Person Availability
+### Ingest Person Availability
 
 - [ ] `p2` - **ID**: `cpt-person-usecase-ingest-availability`
 
