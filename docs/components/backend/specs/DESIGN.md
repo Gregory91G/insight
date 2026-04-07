@@ -1336,7 +1336,7 @@ ArgoCD (one Application per service + one per infra chart)
 | Identity Resolution Service (3.2) | `cpt-insightspec-fr-be-identity-resolution-service` |
 | Transform Service (3.2) | `cpt-insightspec-fr-be-transform-rules` |
 | Email Service (3.2) | `cpt-insightspec-fr-be-email-delivery` |
-| Parameterized queries (3.2, 4.5) | `cpt-insightspec-nfr-be-query-safety`, `cpt-insightspec-principle-be-secure-by-default` |
+| Parameterized queries (1.2, 2.1) | `cpt-insightspec-nfr-be-query-safety`, `cpt-insightspec-principle-be-secure-by-default` |
 | Envelope encryption (3.7) | `cpt-insightspec-nfr-be-secret-isolation` |
 | Per-route rate limiting (3.5) | `cpt-insightspec-nfr-be-rate-limiting` |
 | Graceful shutdown (4.6) | `cpt-insightspec-nfr-be-graceful-shutdown` |
