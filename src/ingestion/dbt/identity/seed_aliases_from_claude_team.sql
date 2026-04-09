@@ -23,7 +23,7 @@ WITH latest AS (
     SELECT id AS source_id, email, name, tenant_id
     FROM {{ source('bronze_claude_team', 'claude_team_users') }}
     WHERE email IS NOT NULL AND email != ''
-    QUALIFY row_number() OVER (PARTITION BY email ORDER BY _airbyte_extracted_at DESC) = 1
+    QUALIFY row_number() OVER (PARTITION BY lower(trim(email)), tenant_id ORDER BY _airbyte_extracted_at DESC) = 1
 ),
 
 source AS (
@@ -35,6 +35,7 @@ source AS (
         p.insight_tenant_id
     FROM latest l
     INNER JOIN person.persons p ON lower(trim(l.email)) = lower(p.email)
+        AND UUIDNumToString(sipHash128(coalesce(l.tenant_id, ''))) = p.insight_tenant_id  -- TEMPORARY: until tenants table
 ),
 
 new_aliases AS (
@@ -117,6 +118,7 @@ SELECT na.* FROM new_aliases na
 LEFT ANTI JOIN {{ this }} existing
     ON  na.alias_type          = existing.alias_type
     AND na.alias_value         = existing.alias_value
+    AND na.source_account_id   = existing.source_account_id
     AND existing.insight_source_type = 'claude_team'
     AND existing.is_deleted    = 0
 {% endif %}

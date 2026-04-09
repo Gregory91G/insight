@@ -146,7 +146,7 @@ All five Anthropic Admin API endpoints use HTTP GET with query parameters for pa
 
 - [ ] `p2` - **ID**: `cpt-insightspec-constraint-claude-team-cursor-pagination`
 
-The users endpoint uses cursor-based pagination with `next_page` token returned in the API response. The manifest passes this token back as the `next_page` query parameter on subsequent requests. Pagination stops when `next_page` is absent or empty. This differs from the page-increment pagination used by Cursor. The manifest must use `CursorPagination` for streams that support it.
+The users endpoint uses cursor-based pagination with `next_page` token returned in the API response. The manifest passes this token back as the `page` query parameter on subsequent requests. Pagination stops when `next_page` is absent or empty in the response. This differs from the page-increment pagination used by Cursor. The manifest must use `CursorPagination` for streams that support it.
 
 #### Substream Pattern for Workspace Members
 
@@ -356,7 +356,7 @@ streams:
         page_token_option:
           type: RequestOption
           inject_into: request_parameter
-          field_name: next_page
+          field_name: page
     transformations:
       - type: AddFields
         fields:
@@ -414,7 +414,7 @@ Ensures every record emitted by all streams contains `tenant_id` from the connec
 
 | Stream | Endpoint | Method | Pagination | Date Params |
 |--------|----------|--------|------------|-------------|
-| `claude_team_users` | `GET /v1/organizations/users` | GET | Cursor: `next_page` token, `limit=100` | None |
+| `claude_team_users` | `GET /v1/organizations/users` | GET | Cursor: `page` param (from response `next_page`), `limit=100` | None |
 | `claude_team_code_usage` | `GET /v1/organizations/usage_report/claude_code` | GET | Cursor-based | Query: `starting_at` (YYYY-MM-DD only; no `ending_at` or `bucket_width`) |
 | `claude_team_workspaces` | `GET /v1/organizations/workspaces` | GET | `limit` param | None |
 | `claude_team_workspace_members` | `GET /v1/organizations/workspaces/{id}/members` | GET | `limit` param | None |
@@ -424,7 +424,7 @@ Ensures every record emitted by all streams contains `tenant_id` from the connec
 
 | Stream | Pagination mechanism | Stop condition |
 |--------|---------------------|----------------|
-| `claude_team_users` | `next_page` token from response | `next_page` absent or empty in response |
+| `claude_team_users` | `next_page` token from response → sent as `page` param | `next_page` absent or empty in response |
 | `claude_team_code_usage` | Cursor-based | No more pages returned |
 | `claude_team_workspaces` | Single page (all results with `limit`) | Single response |
 | `claude_team_workspace_members` | Per-workspace, single page each | Iterated over all workspace IDs |
@@ -540,8 +540,8 @@ sequenceDiagram
     Orch->>Src: run read (config, manifest, catalog, state)
 
     Note over Src,AApi: Stream 1: claude_team_users (full refresh)
-    loop Cursor pagination (next_page)
-        Src->>AApi: GET /v1/organizations/users?limit=100&next_page={token}<br/>[x-api-key, anthropic-version]
+    loop Cursor pagination (page)
+        Src->>AApi: GET /v1/organizations/users?limit=100&page={token}<br/>[x-api-key, anthropic-version]
         AApi-->>Src: {data: [...], has_more: bool}
         Src->>Src: Wait 1s between pages
     end

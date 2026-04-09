@@ -9,6 +9,7 @@
 --   seed_aliases_from_claude_team.sql
 -- ============================================================
 
+-- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
 
 -- ============================================================
 -- Step 1: Add persons from Claude Team (skip existing by email)
@@ -99,6 +100,7 @@ FROM new_aliases na
 LEFT ANTI JOIN identity.aliases existing
     ON  na.alias_type              = existing.alias_type
     AND na.alias_value             = existing.alias_value
+    AND na.source_account_id       = existing.source_account_id
     AND existing.insight_source_type = 'claude_team'
     AND existing.is_deleted        = 0;
 

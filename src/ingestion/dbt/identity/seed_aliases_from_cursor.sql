@@ -29,6 +29,7 @@ WITH source AS (
     FROM {{ source('bronze_cursor', 'cursor_members') }} cm
     INNER JOIN {{ ref('seed_persons_from_cursor') }} p
         ON lower(trim(cm.email)) = lower(p.email)
+        AND UUIDNumToString(sipHash128(coalesce(cm.tenant_id, ''))) = p.insight_tenant_id  -- TEMPORARY: until tenants table
     WHERE cm.email IS NOT NULL AND cm.email != ''
 ),
 

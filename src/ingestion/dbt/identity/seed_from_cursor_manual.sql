@@ -10,6 +10,8 @@
 -- ============================================================
 
 
+-- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
+
 -- ============================================================
 -- Step 1: Add persons from Cursor (skip existing by email)
 -- ============================================================
@@ -33,6 +35,7 @@ SELECT
      + if(role IS NOT NULL AND role != '', 1, 0)) / 7.0
 FROM bronze_cursor.cursor_members cm
 WHERE cm.email IS NOT NULL AND cm.email != ''
+QUALIFY row_number() OVER (PARTITION BY lower(trim(email)) ORDER BY _airbyte_extracted_at DESC) = 1
   AND lower(trim(cm.email)) NOT IN (
       SELECT lower(email) FROM person.persons WHERE is_deleted = 0
   );
@@ -89,6 +92,7 @@ FROM new_aliases na
 LEFT ANTI JOIN identity.aliases existing
     ON  na.alias_type              = existing.alias_type
     AND na.alias_value             = existing.alias_value
+    AND na.source_account_id       = existing.source_account_id
     AND existing.insight_source_type = 'cursor'
     AND existing.is_deleted        = 0;
 

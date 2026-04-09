@@ -18,6 +18,7 @@
 ) }}
 
 -- Column set matches bootstrap_inputs_from_history macro output.
+-- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
 
 WITH latest AS (
     SELECT id AS source_id, email, name, tenant_id
@@ -39,7 +40,6 @@ observations AS (
         'UPSERT'                                                    AS operation_type,
         now64(3)                                                    AS _synced_at
     FROM latest
-    WHERE email IS NOT NULL AND email != ''
 
     UNION ALL
 
@@ -81,4 +81,5 @@ LEFT ANTI JOIN {{ this }} existing
     AND o.alias_value         = existing.alias_value
     AND o.source_account_id   = existing.source_account_id
     AND existing.insight_source_type = 'claude_team'
+    AND existing.insight_tenant_id = o.insight_tenant_id
 {% endif %}

@@ -16,9 +16,9 @@ date: 2026-04-08
   - [Consequences](#consequences)
   - [Confirmation](#confirmation)
 - [Pros and Cons of the Options](#pros-and-cons-of-the-options)
-  - [Option 1: cursor_granularity: PT1S](#option-1-cursorgranularity-pt1s)
-  - [Option 2: Remove end_time_option and let API default ending_at](#option-2-remove-endtimeoption-and-let-api-default-endingat)
-  - [Option 3: Set end_datetime to day_delta(1) to push past today](#option-3-set-enddatetime-to-daydelta1-to-push-past-today)
+  - [Option 1: cursor\_granularity: PT1S](#option-1-cursor_granularity-pt1s)
+  - [Option 2: Remove end\_time\_option and let API default ending\_at](#option-2-remove-end_time_option-and-let-api-default-ending_at)
+  - [Option 3: Set end\_datetime to day\_delta(1) to push past today](#option-3-set-end_datetime-to-day_delta1-to-push-past-today)
 - [More Information](#more-information)
 - [Traceability](#traceability)
 
@@ -28,13 +28,13 @@ date: 2026-04-08
 
 Airbyte's `DatetimeBasedCursor` computes the `ending_at` timestamp for each time window partition as:
 
-```
+```text
 ending_at = partition_start + step - cursor_granularity
 ```
 
 With the original configuration (`step: P1D`, `cursor_granularity: P1D`), the last partition for the current day produces:
 
-```
+```text
 ending_at = today_00:00 + P1D - P1D = today_00:00 = starting_at
 ```
 
@@ -62,7 +62,7 @@ Both `claude_api_messages_usage` and `claude_api_cost_report` streams include `e
 
 With `step: P1D` and `cursor_granularity: PT1S`, the current-day partition computes:
 
-```
+```text
 ending_at = today_00:00 + P1D - PT1S = today_23:59:59Z
 ```
 

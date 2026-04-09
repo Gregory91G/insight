@@ -15,6 +15,7 @@
 
 -- Each cursor member emits up to 3 observation rows: email, platform_id, display_name.
 -- Column set matches bootstrap_inputs_from_history macro output.
+-- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
 
 WITH source AS (
     SELECT
@@ -23,7 +24,6 @@ WITH source AS (
         cm.email,
         cm.tenant_id
     FROM {{ source('bronze_cursor', 'cursor_members') }} cm
-    WHERE cm.email IS NOT NULL AND cm.email != ''
 ),
 
 observations AS (
@@ -81,4 +81,5 @@ LEFT ANTI JOIN {{ this }} existing
     AND o.alias_value         = existing.alias_value
     AND o.source_account_id   = existing.source_account_id
     AND existing.insight_source_type = 'cursor'
+    AND existing.insight_tenant_id = o.insight_tenant_id
 {% endif %}

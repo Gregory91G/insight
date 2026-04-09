@@ -15,6 +15,7 @@
 
 SELECT
     generateUUIDv7()                                        AS id,
+    -- TEMPORARY: sipHash128 derives UUID from string tenant_id until tenants table exists
     UUIDNumToString(sipHash128(coalesce(tenant_id, '')))             AS insight_tenant_id,
     coalesce(name, '')                                      AS display_name,
     'cursor'                                                AS display_name_source,
@@ -46,7 +47,10 @@ SELECT
 FROM {{ source('bronze_cursor', 'cursor_members') }} cm
 WHERE cm.email IS NOT NULL AND cm.email != ''
 {% if is_incremental() %}
-  AND lower(trim(cm.email)) NOT IN (
-      SELECT lower(email) FROM {{ this }} WHERE is_deleted = 0
+  AND NOT EXISTS (
+      SELECT 1 FROM {{ this }} ex
+      WHERE lower(ex.email) = lower(trim(cm.email))
+        AND ex.insight_tenant_id = UUIDNumToString(sipHash128(coalesce(cm.tenant_id, '')))
+        AND ex.is_deleted = 0
   )
 {% endif %}

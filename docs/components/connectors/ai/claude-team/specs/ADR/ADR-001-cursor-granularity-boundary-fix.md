@@ -27,7 +27,7 @@ date: 2026-04-08
 
 Airbyte's `DatetimeBasedCursor` computes the `ending_at` timestamp for each time window partition as:
 
-```
+```text
 ending_at = partition_start + step - cursor_granularity
 ```
 

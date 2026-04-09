@@ -89,10 +89,6 @@ models:
       Raw alias observations (no normalization). Each cursor member produces
       up to 3 rows: email, platform_id, display_name.
     columns:
-      - name: id
-        description: "Observation UUID (UUIDv7)"
-        tests:
-          - not_null
       - name: insight_tenant_id
         description: "Tenant UUID (derived from Bronze tenant_id via sipHash128)"
         tests:
@@ -206,10 +202,6 @@ models:
       up to 3 rows: email, platform_id, display_name.
       Deduplicates Bronze by taking latest row per email.
     columns:
-      - name: id
-        description: "Observation UUID (UUIDv7)"
-        tests:
-          - not_null
       - name: insight_tenant_id
         description: "Tenant UUID (derived from Bronze tenant_id via sipHash128)"
         tests:

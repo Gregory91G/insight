@@ -30,11 +30,8 @@ echo "=== Running migrations ==="
 for migration in "$SCRIPT_DIR/migrations"/*.sql; do
   [ -f "$migration" ] || continue
   echo "  $(basename "$migration")"
-  while IFS= read -r query; do
-    [ -z "$query" ] && continue
-    kubectl exec -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS" \
-      --query "$query" 2>/dev/null
-  done < <(grep -v '^\s*--' "$migration" | tr '\n' ' ' | sed 's/;/;\n/g' | grep -v '^\s*$')
+  grep -v '^\s*--' "$migration" \
+    | kubectl exec -i -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS" --multiquery
 done
 
 echo "=== Registering connectors ==="

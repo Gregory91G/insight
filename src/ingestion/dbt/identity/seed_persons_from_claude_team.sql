@@ -25,6 +25,7 @@ WITH latest AS (
 
 SELECT
     generateUUIDv7()                                        AS id,
+    -- TEMPORARY: sipHash128 derives UUID from string tenant_id until tenants table exists
     UUIDNumToString(sipHash128(coalesce(tenant_id, '')))             AS insight_tenant_id,
     coalesce(name, '')                                      AS display_name,
     'claude_team'                                           AS display_name_source,
@@ -50,6 +51,7 @@ SELECT
     now64(3)                                                AS updated_at,
     0                                                       AS is_deleted
 FROM latest l
-WHERE lower(trim(l.email)) NOT IN (
-    SELECT lower(email) FROM person.persons WHERE is_deleted = 0
-)
+LEFT ANTI JOIN person.persons ex
+    ON lower(trim(l.email)) = lower(ex.email)
+    AND UUIDNumToString(sipHash128(coalesce(l.tenant_id, ''))) = ex.insight_tenant_id
+    AND ex.is_deleted = 0
