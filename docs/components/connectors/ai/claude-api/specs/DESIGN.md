@@ -443,8 +443,8 @@ sequenceDiagram
 | Column | Type | Description |
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
-| `source_instance_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
-| `unique_key` | String | Composite key: `{date}\|{model}\|{api_key_id}\|{workspace_id}\|{service_tier}\|{context_window}` |
+| `source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
+| `unique_key` | String | Composite key: `{tenant_id}-{source_id}-{date}\|{model}\|{api_key_id}\|{workspace_id}\|{service_tier}\|{context_window}` |
 | `date` | String | Usage date (ISO 8601 date) |
 | `model` | String | Model ID (e.g., `claude-opus-4-6`, `claude-sonnet-4-6`) |
 | `api_key_id` | String | API key identifier |
@@ -478,7 +478,7 @@ sequenceDiagram
 |--------|------|-------------|
 | `tenant_id` | String | Tenant isolation identifier (UUID) -- framework-injected |
 | `source_id` | String | Source instance discriminator -- framework-injected, DEFAULT '' |
-| `unique_key` | String | Composite key: `{date}\|{workspace_id}\|{description}` |
+| `unique_key` | String | Composite key: `{tenant_id}-{source_id}-{date}\|{workspace_id}\|{description}` |
 | `date` | String | Cost date (ISO 8601 date) |
 | `workspace_id` | String | Workspace identifier |
 | `description` | String | Cost category description |

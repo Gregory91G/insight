@@ -392,7 +392,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 
 **Authentication**: API key via `x-api-key` header, with required `anthropic-version: 2023-06-01` header.
 
-**Compatibility**: Anthropic Admin API. Response format is JSON with cursor-based pagination. Field additions are non-breaking. Pagination parameter details are documented in [DESIGN.md](./DESIGN.md) §3.3.
+**Compatibility**: Anthropic Admin API. Response format is JSON; pagination varies by stream (cursor-based for users, next-page token for code_usage, offset for workspaces/invites). See [DESIGN.md](./DESIGN.md) §3.3 for details. Field additions are non-breaking. Pagination parameter details are documented in [DESIGN.md](./DESIGN.md) §3.3.
 
 ## 8. Use Cases
 
@@ -489,7 +489,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 - The Anthropic Admin API response format remains stable across minor versions
 - `email` in the users endpoint and `actor_identifier` in the code usage endpoint are stable, non-null fields for user-type actors
 - Code usage data granularity is one row per `(date, actor_type, actor_identifier, terminal_type)`
-- All endpoints use cursor-based pagination (exact parameter names are configured in the connector manifest)
+- Endpoints use mixed pagination: cursor-based (`after_id`) for users, next-page token for code_usage, offset for workspaces/workspace_members/invites. Parameter names are configured in the connector manifest
 - The `anthropic-version: 2023-06-01` header is required on all requests and will remain stable
 - Workspace members can be fetched by iterating over workspace IDs from the workspaces endpoint
 - Daily usage data is available with D+1 lag (same day or next day)

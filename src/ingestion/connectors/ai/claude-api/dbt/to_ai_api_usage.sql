@@ -53,7 +53,8 @@ SELECT
     u.insight_source_id,
     u.insight_source_type,
     -- composite unique id for incremental
-    concat(u.report_date, '|', u.model, '|', u.api_key_id, '|',
+    concat(u.insight_tenant_id, '-', u.insight_source_id, '-',
+           u.report_date, '|', u.model, '|', u.api_key_id, '|',
            u.workspace_id, '|', u.service_tier, '|',
            u.context_window)                        AS unique_id,
     u.report_date,

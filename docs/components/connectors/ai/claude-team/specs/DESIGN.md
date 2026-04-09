@@ -374,7 +374,7 @@ spec:
   type: Spec
   connection_specification:
     type: object
-    required: [tenant_id, admin_api_key]
+    required: [insight_tenant_id, insight_source_id, admin_api_key]
     properties:
       tenant_id:
         type: string
@@ -455,7 +455,8 @@ The source config (credentials) for the Claude Team connector:
 
 ```json
 {
-  "tenant_id": "Tenant isolation identifier (UUID)",
+  "insight_tenant_id": "Insight tenant isolation identifier (UUID)",
+  "insight_source_id": "Connector instance identifier",
   "admin_api_key": "Anthropic Admin API key (Team/Enterprise workspace)"
 }
 ```
@@ -888,7 +889,7 @@ The following checklist domains have been evaluated and are not applicable for t
 | **MAINT (Maintainability)** | Declarative YAML manifest with no custom code. Maintenance consists of updating field definitions when the API schema changes. |
 | **TEST (Testing)** | Declarative connector validated by the Airbyte framework's built-in checks (connection check, schema validation). No custom code to unit-test. |
 | **COMPL (Compliance)** | The connector extracts work emails and AI activity metrics -- personal/work-linked data under GDPR. Retention, deletion, and access controls are delegated to the Airbyte platform and destination operator. |
-| **UX (Usability)** | No user-facing interface. The only UX surface is the Airbyte connection configuration form (two required fields: `tenant_id` and `admin_api_key`). |
+| **UX (Usability)** | No user-facing interface. The only UX surface is the Airbyte connection configuration form (three required fields: `insight_tenant_id`, `insight_source_id`, and `admin_api_key`). |
 
 ### Architecture Decision Records
 

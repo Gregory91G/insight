@@ -97,7 +97,7 @@ Standalone specification for the Cursor (AI Dev Tool) connector. Expands Source 
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `event_unique` | String | Parent event reference — joins to `cursor_events.unique` |
+| `event_unique` | String | Parent event reference — joins to `cursor_events.unique_key` |
 | `inputTokens` | Float64 | Tokens in the prompt |
 | `outputTokens` | Float64 | Tokens in the model response |
 | `cacheReadTokens` | Float64 | Tokens served from prompt cache |
