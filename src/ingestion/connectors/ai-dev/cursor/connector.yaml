@@ -54,7 +54,7 @@ streams:
   - type: DeclarativeStream
     name: cursor_members
     primary_key:
-      - email
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -64,6 +64,8 @@ streams:
           tenant_id:
             type: string
           source_id:
+            type: string
+          unique_key:
             type: string
           id:
             type: string
@@ -97,6 +99,10 @@ streams:
         type: NoPagination
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['email'] }}"
 
   # ── Stream 2: cursor_audit_logs (incremental, GET) ──
   - type: DeclarativeStream
@@ -250,7 +256,7 @@ streams:
         fields:
           - path:
               - unique_key
-            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['userEmail'] }}{{ record['timestamp'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['userEmail'] }}|{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -341,7 +347,7 @@ streams:
         fields:
           - path:
               - unique_key
-            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['userEmail'] }}{{ record['timestamp'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['userEmail'] }}|{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -460,7 +466,7 @@ streams:
         fields:
           - path:
               - unique_key
-            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['email'] }}{{ record['date'] }}"
+            value: "{{ config['insight_tenant_id'] }}-{{ config.get('insight_source_id', '') }}-{{ record['email'] }}|{{ record['date'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: date
