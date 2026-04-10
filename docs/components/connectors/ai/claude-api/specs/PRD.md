@@ -434,7 +434,7 @@ Repeated collection of the same date range **MUST NOT** create duplicate rows. T
 
 **Main Flow**:
 1. Platform Engineer creates a new connection in Airbyte, selecting the `claude-api` source type.
-2. Engineer provides `tenant_id`, `admin_api_key`, and optionally `insight_source_id` and `start_date`.
+2. Engineer provides `insight_tenant_id`, `insight_source_id`, `admin_api_key`, and optionally `start_date`.
 3. Airbyte executes the check connection flow by reading the `claude_api_workspaces` stream.
 4. On success, the connection is saved and scheduled.
 

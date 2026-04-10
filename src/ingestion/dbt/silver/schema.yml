@@ -16,6 +16,8 @@ models:
         description: "Source system type (e.g. zoom, m365)"
         tests:
           - not_null
+          - accepted_values:
+              values: ['zoom', 'm365']
       - name: unique_key
         description: "Composite deduplication key"
         tests:

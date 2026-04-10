@@ -471,7 +471,7 @@ Bronze table schemas **MUST** remain stable across connector versions. Breaking 
 - `email` is present in users records; `actor_identifier` is present in code usage records
 - Pagination is exhausted for all paginated endpoints (no truncated results)
 - API key authentication with `x-api-key` header and `anthropic-version: 2023-06-01` works correctly
-- `tenant_id` is present in every record emitted by the connector (injected via `AddFields` transformation)
+- `tenant_id` is present in every record (mapped from config `insight_tenant_id` via `AddFields` transformation)
 - `data_source` is set to `insight_claude_team` in every record
 
 ## 10. Dependencies

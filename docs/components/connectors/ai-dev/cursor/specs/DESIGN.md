@@ -344,8 +344,8 @@ streams:
             value: "{{ config['insight_tenant_id'] }}"
           - path: [source_id]
             value: "{{ config['insight_source_id'] }}"
-          - path: [unique]
-            value: "{{ record['userEmail'] }}{{ record['timestamp'] }}"
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['userEmail'] }}|{{ record['timestamp'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
@@ -983,7 +983,7 @@ The following checklist domains have been evaluated and are not applicable for t
 | **MAINT (Maintainability)** | Declarative YAML manifest with no custom code. Maintenance consists of updating field definitions when the API schema changes. No module structure, dependency injection, or layering needed. |
 | **TEST (Testing)** | Declarative connector validated by the Airbyte framework's built-in checks (connection check, schema validation). No custom code to unit-test. Integration testing = run a sync against the live API. |
 | **COMPL (Compliance)** | Limited but applicable. The connector extracts work emails and AI activity metrics — personal/work-linked data under GDPR. Minimum controls: (1) Data classification: emails are personal data; activity metrics are work-linked. (2) Retention and deletion: responsibility of the Airbyte platform and destination owner. (3) Masking/redaction: recommend destination-level controls if required by policy. (4) GDPR/data residency: data access controls owned by the platform operator; connector does not store data beyond transit. |
-| **UX (Usability)** | No user-facing interface. The only UX surface is the Airbyte connection configuration form (two required fields: `tenant_id` and `api_key`), which is defined by the `spec` section of the manifest. |
+| **UX (Usability)** | No user-facing interface. The only UX surface is the Airbyte connection configuration form (three required fields: `insight_tenant_id`, `insight_source_id`, and `api_key`), which is defined by the `spec` section of the manifest. |
 
 ### Architecture Decision Records
 

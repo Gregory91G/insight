@@ -29,6 +29,8 @@ models:
         description: "Source system type (always 'bamboohr')"
         tests:
           - not_null
+          - accepted_values:
+              values: ['bamboohr']
       - name: unique_key
         description: "Composite dedup key"
         tests:

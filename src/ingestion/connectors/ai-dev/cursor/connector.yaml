@@ -108,7 +108,7 @@ streams:
   - type: DeclarativeStream
     name: cursor_audit_logs
     primary_key:
-      - event_id
+      - unique_key
     schema_loader:
       type: InlineSchemaLoader
       schema:
@@ -118,6 +118,8 @@ streams:
           tenant_id:
             type: string
           source_id:
+            type: string
+          unique_key:
             type: string
           event_id:
             type: string
@@ -157,6 +159,10 @@ streams:
         $ref: "#/definitions/get_paginator"
     transformations:
       - $ref: "#/definitions/tenant_id_injection"
+      - type: AddFields
+        fields:
+          - path: [unique_key]
+            value: "{{ config['insight_tenant_id'] }}-{{ config['insight_source_id'] }}-{{ record['event_id'] }}"
     incremental_sync:
       type: DatetimeBasedCursor
       cursor_field: timestamp
