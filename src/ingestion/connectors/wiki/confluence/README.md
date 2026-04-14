@@ -77,7 +77,7 @@ User identity resolution: `wiki_pages.author_id` -> `jira_user.account_id` -> `e
 This connector does NOT include a `wiki_users` stream. Confluence v2 page and version responses return only `authorId` (Atlassian `accountId`), not email or display name. User identity resolution happens in the Silver/dbt layer via JOIN with `jira_user`, which shares the same Atlassian `accountId` namespace.
 
 Resolution chain (Silver):
-```
+```text
 wiki_pages.author_id (accountId)
   -> jira_user.account_id (same Atlassian accountId)
     -> jira_user.email

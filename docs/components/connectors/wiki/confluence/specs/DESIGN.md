@@ -380,7 +380,7 @@ Extracts user identity attributes from Confluence Cloud API page and version obj
 | Aspect | Value |
 |--------|-------|
 | Interface | Not called directly by this connector |
-| Role | Resolves `wiki_users.email` -> `person_id` in Silver step 2 |
+| Role | Resolves `jira_user.email` -> `person_id` in Silver step 2 |
 | Criticality | Downstream — connector emits Bronze records regardless of identity resolution |
 
 #### Destination Store (ClickHouse)
@@ -485,9 +485,9 @@ All Bronze table schemas are defined in [`confluence.md`](../confluence.md) and 
 All tables use `ReplacingMergeTree(_version)` with `_version = toUnixTimestamp64Milli(now64())` for deduplication.
 
 > **Note on schema types**: All stream schemas use `{}` (any type) for property types instead of specific types (string, integer, etc.). This is intentional because Airbyte `AddFields` transformations may return values with varying types depending on the source data. ClickHouse handles typing at the destination level via column definitions.
-
+>
 > **Note on `wiki_page_activity`**: The PRD defines a `wiki_page_activity` table with per-user per-day edit and view counts. In Phase 1, this table is NOT populated by the connector. Raw version records are stored in `wiki_page_versions`; expansion to `wiki_page_activity` (one row per edit per user per day) is deferred to Silver/dbt. View activity (analytics) is deferred to Phase 2.
-
+>
 > **Note on `confluence_collection_runs`**: Sync monitoring is handled by the Airbyte platform sync logs in Phase 1. The connector-specific `confluence_collection_runs` table is not implemented at the connector level.
 
 ---
@@ -590,7 +590,7 @@ The following corrections to the PRD assumptions were identified during API vali
 | `title` | `title` | Page title |
 | `status` | `status` | `current` / `archived` / `trashed` |
 | `author_id` | `authorId` | Atlassian `accountId` of creator |
-| `author_email` | NULL | Not populated in Phase 1 — resolved in Silver via JOIN with `wiki_users` |
+| `author_email` | NULL | Not populated in Phase 1 — resolved in Silver via JOIN with `jira_user` |
 | `last_editor_id` | `version.authorId` | `accountId` of last version author |
 | `last_editor_email` | NULL | Not populated in Phase 1 — resolved in Silver |
 | `created_at` | `createdAt` | ISO 8601 |
@@ -630,6 +630,8 @@ The following corrections to the PRD assumptions were identified during API vali
 ### Collection Strategy
 
 **Incremental Pages Collection**: Pages are fetched from `GET /wiki/api/v2/pages?sort=-modified-date&status=current,archived,trashed`. The `DatetimeBasedCursor` uses `version.createdAt` (mapped to `updated_at`) as the cursor field with `is_client_side_incremental: true`. The connector reads pages in descending modification order and filters client-side against the stored cursor. This means all pages are fetched from the API on each run, but only records newer than the cursor are emitted as RECORD messages. On large instances, this is less efficient than server-side filtering but is the only option given the v2 API constraints.
+
+**Descending Sort Order Rationale**: The `wiki_pages` stream uses `sort=-modified-date` (descending) with `is_client_side_incremental: true`. This is intentional: descending order puts recently modified pages first, so the client-side cursor filter encounters fresh records on the first pagination page and can stop earlier. Airbyte updates the cursor to `max(updated_at)` across all received records regardless of sort order, so cursor correctness is maintained. Ascending order would require paginating through all historical pages before reaching fresh data -- inefficient for large instances (10K+ pages).
 
 **Version History Collection**: Version history is fetched per-page via `SubstreamPartitionRouter` (`GET /wiki/api/v2/pages/{page_id}/versions`). This is an N+1 pattern (one API call chain per page in the incremental window). Raw version records are stored in `wiki_page_versions`. Expansion to `wiki_page_activity` (one row per edit per user per day) is deferred to Silver/dbt.
 
@@ -700,7 +702,7 @@ Confluence v2 API returns timestamps in ISO 8601 format (e.g., `2026-04-01T14:30
 2. **`cursor_datetime_formats`**: parses the ISO timestamp from records (`%Y-%m-%dT%H:%M:%S.%fZ`, `%Y-%m-%dT%H:%M:%S.%f%z`)
 3. **`datetime_format`**: `%Y-%m-%dT%H:%M:%S.%fZ` — full ISO format for cursor state
 4. **`is_client_side_incremental`**: `true` — cursor filtering happens client-side since the API has no `lastModifiedAfter` parameter
-5. **`start_datetime`**: configurable via `start_date` config field (default: `2020-01-01`)
+5. **`start_datetime`**: configurable via `confluence_start_date` config field (default: `2020-01-01`)
 6. **Sort order**: `sort=-modified-date` ensures newest pages are fetched first
 
 ---
@@ -760,7 +762,7 @@ The following DESIGN checklist domains are intentionally omitted from this docum
 | MAINT-DESIGN-002 — Technical Debt | Not applicable | New design; no known technical debt at time of writing. |
 | MAINT-DESIGN-003 — Documentation Strategy | Not applicable | Documentation strategy is owned by the platform-level PRD and engineering wiki. |
 | TEST-DESIGN-002 — Testing Strategy | Deferred to DECOMPOSITION | Unit, integration, and E2E test approach will be documented in the DECOMPOSITION artifact when implementation is planned. |
-| COMPL-DESIGN-001 — Compliance Architecture | Not applicable | The connector collects wiki metadata and version history. User `accountId` values in `wiki_users` are personal data under GDPR; retention and data subject rights are platform/destination operator responsibilities, not connector responsibilities. |
+| COMPL-DESIGN-001 — Compliance Architecture | Not applicable | The connector collects wiki metadata and version history. User `accountId` values emitted by the connector are personal data under GDPR; retention and data subject rights are platform/destination operator responsibilities, not connector responsibilities. |
 | COMPL-DESIGN-002 — Privacy Architecture | Not applicable | No page body/content is extracted — only metadata and version history. Access controls, retention, and privacy impact assessment are platform responsibilities. |
 | UX-DESIGN-001 — User-Facing Architecture | Not applicable | Configuration is a credential form and space filter in the Airbyte UI. No end-user UX or accessibility requirements. |
 | ARCH-DESIGN-010 — Capacity and Cost Budgets | Not applicable | Capacity planning and cost estimation are platform-level concerns. Connector resource consumption is bounded by Confluence API rate limits (documented in Section 2.2 and Section 3.5). |
