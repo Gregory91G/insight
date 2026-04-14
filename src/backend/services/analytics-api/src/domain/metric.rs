@@ -1,44 +1,54 @@
-//! View domain model.
+//! Metric domain model.
 
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// A view definition — an admin-configured SQL query against `ClickHouse`.
+/// A metric definition — an admin-configured SQL query against ClickHouse.
+///
+/// The `query_ref` field holds raw ClickHouse SQL. The query engine wraps it
+/// as a subquery, appending security filters + OData filters as parameterized
+/// WHERE clauses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct View {
+pub struct Metric {
     pub id: Uuid,
     pub insight_tenant_id: Uuid,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub clickhouse_table: String,
-    pub base_query: String,
+    pub query_ref: String,
     pub is_enabled: bool,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
 }
 
-/// Request to create a new view.
-#[derive(Debug, Deserialize)]
-pub struct CreateViewRequest {
+/// Summary returned in list endpoints (no `query_ref`).
+#[derive(Debug, Clone, Serialize)]
+pub struct MetricSummary {
+    pub id: Uuid,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub clickhouse_table: String,
-    pub base_query: String,
 }
 
-/// Request to update a view.
+/// Request to create a new metric.
 #[derive(Debug, Deserialize)]
-pub struct UpdateViewRequest {
+pub struct CreateMetricRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub query_ref: String,
+}
+
+/// Request to update a metric.
+#[derive(Debug, Deserialize)]
+pub struct UpdateMetricRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub clickhouse_table: Option<String>,
-    pub base_query: Option<String>,
+    pub query_ref: Option<String>,
     pub is_enabled: Option<bool>,
 }
 
-/// A column in the `ClickHouse` schema catalog.
+/// A column in the ClickHouse schema catalog.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableColumn {
     pub id: Uuid,

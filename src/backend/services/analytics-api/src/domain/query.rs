@@ -1,41 +1,38 @@
-//! Query request/response models.
+//! Query request/response models — OData-style per DNA REST conventions.
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-/// Query request body for `POST /v1/views/{id}/query`.
+/// Query request body for `POST /v1/metrics/{id}/query`.
+///
+/// Uses OData-style parameters: `$filter`, `$orderby`, `$select`, `$top`, `$skip`.
 #[derive(Debug, Deserialize)]
 pub struct QueryRequest {
-    #[serde(default)]
-    pub filters: QueryFilters,
-    #[serde(default)]
-    pub order_by: Option<String>,
-    #[serde(default = "default_order_dir")]
-    pub order_dir: String,
-    #[serde(default = "default_limit")]
-    pub limit: u64,
-    #[serde(default)]
-    pub cursor: Option<String>,
+    /// OData filter expression.
+    /// e.g. `"metric_date ge '2026-03-01' and metric_date lt '2026-04-01'"`.
+    #[serde(rename = "$filter", default)]
+    pub filter: Option<String>,
+
+    /// OData ordering expression.
+    /// e.g. `"metric_date desc"`.
+    #[serde(rename = "$orderby", default)]
+    pub orderby: Option<String>,
+
+    /// Comma-separated list of columns to return.
+    /// e.g. `"person_id, avg_hours, metric_date"`.
+    #[serde(rename = "$select", default)]
+    pub select: Option<String>,
+
+    /// Maximum number of rows (default 25, max 200).
+    #[serde(rename = "$top", default = "default_top")]
+    pub top: u64,
+
+    /// Opaque cursor for keyset pagination (from previous `page_info.cursor`).
+    #[serde(rename = "$skip", default)]
+    pub skip: Option<String>,
 }
 
-fn default_order_dir() -> String {
-    "desc".to_owned()
-}
-
-fn default_limit() -> u64 {
+fn default_top() -> u64 {
     25
-}
-
-/// Available query filters.
-#[derive(Debug, Default, Deserialize)]
-pub struct QueryFilters {
-    /// Start of date range (inclusive). ISO-8601 date.
-    pub date_from: Option<String>,
-    /// End of date range (exclusive). ISO-8601 date.
-    pub date_to: Option<String>,
-    /// Insight person IDs. Resolved to source aliases before querying `ClickHouse`.
-    #[serde(default)]
-    pub person_ids: Vec<Uuid>,
 }
 
 /// Query response with cursor-based pagination.

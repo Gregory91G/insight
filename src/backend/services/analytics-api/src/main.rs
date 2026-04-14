@@ -1,7 +1,7 @@
-//! Analytics API — read-only query service over `ClickHouse` views.
+//! Analytics API — read-only query service over predefined ClickHouse metrics.
 //!
-//! Serves predefined views (stored in `MariaDB`) with tenant-scoped,
-//! org-scoped security filters applied automatically.
+//! Serves admin-defined metrics (SQL queries stored in MariaDB) with tenant-scoped,
+//! org-scoped security filters and OData-style querying.
 //!
 //! # Usage
 //!
@@ -23,7 +23,7 @@ use tracing_subscriber::EnvFilter;
 /// Analytics API service.
 #[derive(Parser)]
 #[command(name = "analytics-api")]
-#[command(about = "Insight Analytics API — query service over ClickHouse views")]
+#[command(about = "Insight Analytics API — query service over ClickHouse metrics")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     /// Path to YAML configuration file.

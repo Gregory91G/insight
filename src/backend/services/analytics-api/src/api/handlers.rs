@@ -4,14 +4,19 @@ use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
-use sea_orm::{ColumnTrait, Condition, EntityTrait, IntoActiveModel, QueryFilter, Set, ActiveModelTrait, NotSet};
+use sea_orm::{ActiveModelTrait, ColumnTrait, Condition, EntityTrait, NotSet, QueryFilter, Set};
 use std::sync::Arc;
 use uuid::Uuid;
 
 use super::AppState;
 use crate::auth::SecurityContext;
+use crate::domain::metric::{
+    CreateMetricRequest, Metric, MetricSummary, TableColumn, UpdateMetricRequest,
+};
 use crate::domain::query::{PageInfo, QueryRequest, QueryResponse};
-use crate::domain::view::{CreateViewRequest, TableColumn, UpdateViewRequest, View};
+use crate::domain::threshold::{
+    self, CreateThresholdRequest, Threshold, UpdateThresholdRequest,
+};
 use crate::infra::db::entities;
 
 // ── Health ──────────────────────────────────────────────────
@@ -20,96 +25,93 @@ pub async fn health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "healthy" }))
 }
 
-// ── Views CRUD ──────────────────────────────────────────────
+// ── Metrics CRUD ────────────────────────────────────────────
 
-pub async fn list_views(
+pub async fn list_metrics(
     State(state): State<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let views = entities::views::Entity::find()
-        .filter(entities::views::Column::InsightTenantId.eq(ctx.insight_tenant_id))
-        .filter(entities::views::Column::IsEnabled.eq(true))
+    let rows = entities::metrics::Entity::find()
+        .filter(entities::metrics::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .filter(entities::metrics::Column::IsEnabled.eq(true))
         .all(&state.db)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, "failed to list views");
+            tracing::error!(error = %e, "failed to list metrics");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let items: Vec<View> = views.into_iter().map(model_to_view).collect();
-
+    let items: Vec<MetricSummary> = rows.into_iter().map(model_to_metric_summary).collect();
     Ok(Json(serde_json::json!({ "items": items })))
 }
 
-pub async fn get_view(
+pub async fn get_metric(
     State(state): State<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let view = entities::views::Entity::find_by_id(id)
-        .filter(entities::views::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+    let row = entities::metrics::Entity::find_by_id(id)
+        .filter(entities::metrics::Column::InsightTenantId.eq(ctx.insight_tenant_id))
         .one(&state.db)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, "failed to get view");
+            tracing::error!(error = %e, "failed to get metric");
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    Ok(Json(model_to_view(view)))
+    Ok(Json(model_to_metric(row)))
 }
 
-pub async fn create_view(
+pub async fn create_metric(
     State(state): State<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
-    Json(req): Json<CreateViewRequest>,
+    Json(req): Json<CreateMetricRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
     let id = Uuid::now_v7();
 
-    let model = entities::views::ActiveModel {
+    let model = entities::metrics::ActiveModel {
         id: Set(id),
         insight_tenant_id: Set(ctx.insight_tenant_id),
         name: Set(req.name),
         description: Set(req.description),
-        clickhouse_table: Set(req.clickhouse_table),
-        base_query: Set(req.base_query),
+        query_ref: Set(req.query_ref),
         is_enabled: Set(true),
         created_at: NotSet,
         updated_at: NotSet,
     };
 
-    entities::views::Entity::insert(model)
+    entities::metrics::Entity::insert(model)
         .exec(&state.db)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, "failed to create view");
+            tracing::error!(error = %e, "failed to create metric");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    // Re-fetch to get timestamps
-    let view = entities::views::Entity::find_by_id(id)
+    let row = entities::metrics::Entity::find_by_id(id)
         .one(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok((StatusCode::CREATED, Json(model_to_view(view))))
+    Ok((StatusCode::CREATED, Json(model_to_metric(row))))
 }
 
-pub async fn update_view(
+pub async fn update_metric(
     State(state): State<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
-    Json(req): Json<UpdateViewRequest>,
+    Json(req): Json<UpdateMetricRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let existing = entities::views::Entity::find_by_id(id)
-        .filter(entities::views::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+    let existing = entities::metrics::Entity::find_by_id(id)
+        .filter(entities::metrics::Column::InsightTenantId.eq(ctx.insight_tenant_id))
         .one(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let mut model: entities::views::ActiveModel = existing.into();
+    let mut model: entities::metrics::ActiveModel = existing.into();
 
     if let Some(name) = req.name {
         model.name = Set(name);
@@ -117,40 +119,37 @@ pub async fn update_view(
     if let Some(desc) = req.description {
         model.description = Set(Some(desc));
     }
-    if let Some(table) = req.clickhouse_table {
-        model.clickhouse_table = Set(table);
-    }
-    if let Some(query) = req.base_query {
-        model.base_query = Set(query);
+    if let Some(query_ref) = req.query_ref {
+        model.query_ref = Set(query_ref);
     }
     if let Some(enabled) = req.is_enabled {
         model.is_enabled = Set(enabled);
     }
 
     let updated = model.update(&state.db).await.map_err(|e| {
-        tracing::error!(error = %e, "failed to update view");
+        tracing::error!(error = %e, "failed to update metric");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    Ok(Json(model_to_view(updated)))
+    Ok(Json(model_to_metric(updated)))
 }
 
-pub async fn delete_view(
+pub async fn delete_metric(
     State(state): State<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let existing = entities::views::Entity::find_by_id(id)
-        .filter(entities::views::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+    let existing = entities::metrics::Entity::find_by_id(id)
+        .filter(entities::metrics::Column::InsightTenantId.eq(ctx.insight_tenant_id))
         .one(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let mut model: entities::views::ActiveModel = existing.into();
+    let mut model: entities::metrics::ActiveModel = existing.into();
     model.is_enabled = Set(false);
     model.update(&state.db).await.map_err(|e| {
-        tracing::error!(error = %e, "failed to soft-delete view");
+        tracing::error!(error = %e, "failed to soft-delete metric");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -159,84 +158,114 @@ pub async fn delete_view(
 
 // ── Query ───────────────────────────────────────────────────
 
-pub async fn query_view(
+pub async fn query_metric(
     State(state): State<Arc<AppState>>,
     Extension(ctx): Extension<SecurityContext>,
     Path(id): Path<Uuid>,
     Json(req): Json<QueryRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // 1. Load view definition
-    let view = entities::views::Entity::find_by_id(id)
-        .filter(entities::views::Column::InsightTenantId.eq(ctx.insight_tenant_id))
-        .filter(entities::views::Column::IsEnabled.eq(true))
+    // 1. Load metric definition
+    let metric = entities::metrics::Entity::find_by_id(id)
+        .filter(entities::metrics::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .filter(entities::metrics::Column::IsEnabled.eq(true))
         .one(&state.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // 2. Validate limit
-    let limit = req.limit.min(200).max(1);
+    // 2. Load thresholds for this metric
+    let thresholds = entities::thresholds::Entity::find()
+        .filter(entities::thresholds::Column::MetricId.eq(id))
+        .filter(entities::thresholds::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .all(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // 3. Build ClickHouse query from base_query + security filters + user filters
+    // 3. Validate $top
+    let top = req.top.min(200).max(1);
+
+    // 4. Build ClickHouse query from query_ref + security filters + OData filters
     //
-    // TODO: This is a simplified implementation. The full version should:
-    // - Parse base_query to extract column names for order_by validation
+    // TODO: Full implementation should:
+    // - Wrap query_ref as subquery
+    // - Parse OData $filter expression into parameterized WHERE clauses
+    // - Validate org_unit_id from $filter against AccessScope (IDOR prevention)
     // - Resolve person_ids via Identity Resolution API
-    // - Apply org-unit scope from AccessScope
-    // - Apply membership time ranges
-    // - Implement cursor-based pagination (decode cursor → offset)
+    // - Parse $orderby and validate columns against metric schema
+    // - Parse $select to restrict returned columns
+    // - Implement cursor-based pagination (decode $skip → keyset)
+    //
+    // Current: demonstrate the query building pipeline with direct table query.
 
-    let mut qb = state
-        .ch
-        .tenant_query(&view.clickhouse_table, ctx.insight_tenant_id)
-        .map_err(|e| {
-            tracing::error!(error = %e, "invalid table in view");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let query_ref = &metric.query_ref;
+    let mut sql = format!("SELECT * FROM ({query_ref}) AS _q WHERE insight_tenant_id = ?");
+    let mut params: Vec<String> = vec![ctx.insight_tenant_id.to_string()];
 
-    // Apply date filters
-    if let Some(ref date_from) = req.filters.date_from {
-        qb = qb.filter("metric_date >= ?", date_from.as_str()).map_err(|e| {
-            tracing::warn!(error = %e, "invalid date_from filter");
-            StatusCode::BAD_REQUEST
-        })?;
-    }
-    if let Some(ref date_to) = req.filters.date_to {
-        qb = qb.filter("metric_date < ?", date_to.as_str()).map_err(|e| {
-            tracing::warn!(error = %e, "invalid date_to filter");
-            StatusCode::BAD_REQUEST
-        })?;
+    // Parse OData $filter (simplified — production needs a proper OData parser)
+    if let Some(ref filter) = req.filter {
+        // Extract date filters
+        if let Some(date_from) = extract_odata_value(filter, "metric_date", "ge") {
+            sql.push_str(" AND metric_date >= ?");
+            params.push(date_from);
+        }
+        if let Some(date_to) = extract_odata_value(filter, "metric_date", "lt") {
+            sql.push_str(" AND metric_date < ?");
+            params.push(date_to);
+        }
     }
 
-    // Apply ordering
-    if let Some(ref order_by) = req.order_by {
-        let dir = if req.order_dir == "asc" { "ASC" } else { "DESC" };
-        let clause = format!("{order_by} {dir}");
-        qb = qb.order_by(&clause).map_err(|e| {
-            tracing::warn!(error = %e, order_by = %order_by, "invalid order_by");
-            StatusCode::BAD_REQUEST
-        })?;
+    // Apply $orderby
+    if let Some(ref orderby) = req.orderby {
+        // TODO: Validate column names against metric schema
+        sql.push_str(&format!(" ORDER BY {orderby}"));
     }
 
-    // Apply pagination (fetch limit+1 to detect has_next)
-    qb = qb.limit(limit + 1);
+    // Apply pagination (fetch top+1 to detect has_next)
+    sql.push_str(&format!(" LIMIT {}", top + 1));
 
-    // TODO: Execute the query. Currently the insight-clickhouse crate's
-    // fetch_all requires Row trait implementations for the result type.
-    // For dynamic views (columns vary per view), we need either:
+    tracing::debug!(sql = %sql, metric_id = %id, "executing metric query");
+
+    // TODO: Execute the query against ClickHouse.
+    // For dynamic metrics (columns vary per metric), we need either:
     // - A generic row type that deserializes any column set
     // - Raw query execution returning serde_json::Value rows
     //
-    // For now, return the SQL for debugging.
-    let sql = qb.to_sql();
-    tracing::debug!(sql = %sql, view_id = %id, "executing view query");
+    // Placeholder response with debug info.
+    let mut items: Vec<serde_json::Value> = vec![serde_json::json!({
+        "_debug_sql": sql,
+        "_debug_params": params,
+        "_note": "query execution not yet implemented — need dynamic row deserialization"
+    })];
 
-    // Placeholder response
+    // 5. Evaluate thresholds on each result row
+    for item in &mut items {
+        if let Some(obj) = item.as_object_mut() {
+            let mut threshold_results = serde_json::Map::new();
+            for t in &thresholds {
+                if let Some(val) = obj.get(&t.field_name).and_then(|v| v.as_f64()) {
+                    if threshold::threshold_matches(val, &t.operator, t.value) {
+                        // Keep highest severity: critical > warning > good
+                        let current = threshold_results
+                            .get(&t.field_name)
+                            .and_then(|v| v.as_str());
+                        if should_upgrade_level(current, &t.level) {
+                            threshold_results.insert(
+                                t.field_name.clone(),
+                                serde_json::Value::String(t.level.clone()),
+                            );
+                        }
+                    }
+                }
+            }
+            obj.insert(
+                "_thresholds".to_owned(),
+                serde_json::Value::Object(threshold_results),
+            );
+        }
+    }
+
     let response = QueryResponse {
-        items: vec![serde_json::json!({
-            "_debug_sql": sql,
-            "_note": "query execution not yet implemented — need dynamic row deserialization"
-        })],
+        items,
         page_info: PageInfo {
             has_next: false,
             cursor: None,
@@ -244,6 +273,180 @@ pub async fn query_view(
     };
 
     Ok(Json(response))
+}
+
+/// Returns true if `new_level` is higher severity than `current`.
+fn should_upgrade_level(current: Option<&str>, new_level: &str) -> bool {
+    let rank = |l: &str| match l {
+        "critical" => 3,
+        "warning" => 2,
+        "good" => 1,
+        _ => 0,
+    };
+    match current {
+        Some(c) => rank(new_level) > rank(c),
+        None => true,
+    }
+}
+
+/// Simplified OData value extractor.
+/// Extracts value from patterns like `field_name ge 'value'`.
+fn extract_odata_value(filter: &str, field: &str, op: &str) -> Option<String> {
+    let pattern = format!("{field} {op} '");
+    if let Some(start) = filter.find(&pattern) {
+        let rest = &filter[start + pattern.len()..];
+        if let Some(end) = rest.find('\'') {
+            return Some(rest[..end].to_owned());
+        }
+    }
+    None
+}
+
+// ── Thresholds CRUD ─────────────────────────────────────────
+
+pub async fn list_thresholds(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    Path(metric_id): Path<Uuid>,
+) -> Result<impl IntoResponse, StatusCode> {
+    // Verify metric exists and belongs to tenant
+    entities::metrics::Entity::find_by_id(metric_id)
+        .filter(entities::metrics::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .one(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let rows = entities::thresholds::Entity::find()
+        .filter(entities::thresholds::Column::MetricId.eq(metric_id))
+        .filter(entities::thresholds::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .all(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to list thresholds");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let items: Vec<Threshold> = rows.into_iter().map(model_to_threshold).collect();
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
+pub async fn create_threshold(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    Path(metric_id): Path<Uuid>,
+    Json(req): Json<CreateThresholdRequest>,
+) -> Result<impl IntoResponse, StatusCode> {
+    // Verify metric exists and belongs to tenant
+    entities::metrics::Entity::find_by_id(metric_id)
+        .filter(entities::metrics::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .one(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    // Validate operator and level
+    threshold::validate_threshold(&req.operator, &req.level).map_err(|e| {
+        tracing::warn!(error = %e, "invalid threshold");
+        StatusCode::BAD_REQUEST
+    })?;
+
+    let id = Uuid::now_v7();
+
+    let model = entities::thresholds::ActiveModel {
+        id: Set(id),
+        insight_tenant_id: Set(ctx.insight_tenant_id),
+        metric_id: Set(metric_id),
+        field_name: Set(req.field_name),
+        operator: Set(req.operator),
+        value: Set(req.value),
+        level: Set(req.level),
+        created_at: NotSet,
+        updated_at: NotSet,
+    };
+
+    entities::thresholds::Entity::insert(model)
+        .exec(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to create threshold");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let row = entities::thresholds::Entity::find_by_id(id)
+        .one(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok((StatusCode::CREATED, Json(model_to_threshold(row))))
+}
+
+pub async fn update_threshold(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    Path((metric_id, tid)): Path<(Uuid, Uuid)>,
+    Json(req): Json<UpdateThresholdRequest>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let existing = entities::thresholds::Entity::find_by_id(tid)
+        .filter(entities::thresholds::Column::MetricId.eq(metric_id))
+        .filter(entities::thresholds::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .one(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let mut model: entities::thresholds::ActiveModel = existing.into();
+
+    if let Some(field_name) = req.field_name {
+        model.field_name = Set(field_name);
+    }
+    if let Some(operator) = req.operator {
+        if !threshold::VALID_OPERATORS.contains(&operator.as_str()) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        model.operator = Set(operator);
+    }
+    if let Some(value) = req.value {
+        model.value = Set(value);
+    }
+    if let Some(level) = req.level {
+        if !threshold::VALID_LEVELS.contains(&level.as_str()) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        model.level = Set(level);
+    }
+
+    let updated = model.update(&state.db).await.map_err(|e| {
+        tracing::error!(error = %e, "failed to update threshold");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(model_to_threshold(updated)))
+}
+
+pub async fn delete_threshold(
+    State(state): State<Arc<AppState>>,
+    Extension(ctx): Extension<SecurityContext>,
+    Path((metric_id, tid)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let existing = entities::thresholds::Entity::find_by_id(tid)
+        .filter(entities::thresholds::Column::MetricId.eq(metric_id))
+        .filter(entities::thresholds::Column::InsightTenantId.eq(ctx.insight_tenant_id))
+        .one(&state.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    entities::thresholds::Entity::delete_by_id(existing.id)
+        .exec(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to delete threshold");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ── Columns ─────────────────────────────────────────────────
@@ -266,7 +469,6 @@ pub async fn list_columns(
         })?;
 
     let items: Vec<TableColumn> = columns.into_iter().map(model_to_column).collect();
-
     Ok(Json(serde_json::json!({ "items": items })))
 }
 
@@ -290,21 +492,41 @@ pub async fn list_columns_for_table(
         })?;
 
     let items: Vec<TableColumn> = columns.into_iter().map(model_to_column).collect();
-
     Ok(Json(serde_json::json!({ "items": items })))
 }
 
 // ── Mappers ─────────────────────────────────────────────────
 
-fn model_to_view(m: entities::views::Model) -> View {
-    View {
+fn model_to_metric(m: entities::metrics::Model) -> Metric {
+    Metric {
         id: m.id,
         insight_tenant_id: m.insight_tenant_id,
         name: m.name,
         description: m.description,
-        clickhouse_table: m.clickhouse_table,
-        base_query: m.base_query,
+        query_ref: m.query_ref,
         is_enabled: m.is_enabled,
+        created_at: m.created_at.naive_utc(),
+        updated_at: m.updated_at.naive_utc(),
+    }
+}
+
+fn model_to_metric_summary(m: entities::metrics::Model) -> MetricSummary {
+    MetricSummary {
+        id: m.id,
+        name: m.name,
+        description: m.description,
+    }
+}
+
+fn model_to_threshold(m: entities::thresholds::Model) -> Threshold {
+    Threshold {
+        id: m.id,
+        insight_tenant_id: m.insight_tenant_id,
+        metric_id: m.metric_id,
+        field_name: m.field_name,
+        operator: m.operator,
+        value: m.value,
+        level: m.level,
         created_at: m.created_at.naive_utc(),
         updated_at: m.updated_at.naive_utc(),
     }

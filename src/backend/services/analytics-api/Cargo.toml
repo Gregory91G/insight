@@ -1,7 +1,7 @@
 [package]
 name = "analytics-api"
 version = "0.1.0"
-description = "Analytics API — read-only query service over ClickHouse views"
+description = "Analytics API — read-only query service over predefined ClickHouse metrics"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
