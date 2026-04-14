@@ -184,26 +184,28 @@ pub async fn query_metric(
     // 3. Validate $top
     let top = req.top.min(200).max(1);
 
-    // 4. Build ClickHouse query from query_ref + security filters + OData filters
+    // 4. Build ClickHouse query from query_ref.
     //
-    // TODO: Full implementation should:
-    // - Wrap query_ref as subquery
-    // - Parse OData $filter expression into parameterized WHERE clauses
+    // query_ref is parsed into (select_expr, table, group_by) on read.
+    // The engine always builds FROM and WHERE — insight_tenant_id is
+    // always injected for tenant isolation. Admins never control WHERE.
+    //
+    // TODO: Full implementation should also:
     // - Validate org_unit_id from $filter against AccessScope (IDOR prevention)
     // - Resolve person_ids via Identity Resolution API
-    // - Parse $orderby and validate columns against metric schema
     // - Parse $select to restrict returned columns
     // - Implement cursor-based pagination (decode $skip → keyset)
-    //
-    // Current: demonstrate the query building pipeline with direct table query.
 
-    let query_ref = &metric.query_ref;
-    let mut sql = format!("SELECT * FROM ({query_ref}) AS _q WHERE insight_tenant_id = ?");
+    let (select_expr, table, group_by) = parse_query_ref(&metric.query_ref).map_err(|e| {
+        tracing::error!(error = %e, query_ref = %metric.query_ref, "invalid query_ref");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let mut sql = format!("SELECT {select_expr} FROM {table} WHERE insight_tenant_id = ?");
     let mut params: Vec<String> = vec![ctx.insight_tenant_id.to_string()];
 
     // Parse OData $filter (simplified — production needs a proper OData parser)
     if let Some(ref filter) = req.filter {
-        // Extract date filters
         if let Some(date_from) = extract_odata_value(filter, "metric_date", "ge") {
             sql.push_str(" AND metric_date >= ?");
             params.push(date_from);
@@ -214,9 +216,17 @@ pub async fn query_metric(
         }
     }
 
-    // Apply $orderby
+    // Apply GROUP BY from parsed query_ref
+    if let Some(ref gb) = group_by {
+        sql.push_str(&format!(" GROUP BY {gb}"));
+    }
+
+    // Apply $orderby — validate against identifier pattern to prevent injection
     if let Some(ref orderby) = req.orderby {
-        // TODO: Validate column names against metric schema
+        if !is_valid_orderby(orderby) {
+            tracing::warn!(orderby = %orderby, "rejected invalid $orderby");
+            return Err(StatusCode::BAD_REQUEST);
+        }
         sql.push_str(&format!(" ORDER BY {orderby}"));
     }
 
@@ -300,6 +310,106 @@ fn extract_odata_value(filter: &str, field: &str, op: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Parse `query_ref` into (select_expr, table, group_by).
+///
+/// Expects SQL in the form:
+///   `SELECT <columns> FROM <table>`
+///   `SELECT <columns> FROM <table> GROUP BY <expr>`
+///
+/// The engine rebuilds the query with `WHERE insight_tenant_id = ?` always
+/// injected, so admins cannot bypass tenant isolation.
+fn parse_query_ref(query_ref: &str) -> Result<(String, String, Option<String>), String> {
+    let upper = query_ref.to_ascii_uppercase();
+
+    // Find SELECT ... FROM boundary
+    let from_pos = upper
+        .find(" FROM ")
+        .ok_or("query_ref must contain SELECT ... FROM ...")?;
+
+    let select_expr = query_ref[..from_pos]
+        .trim()
+        .strip_prefix_insensitive("SELECT")
+        .ok_or("query_ref must start with SELECT")?
+        .trim()
+        .to_owned();
+
+    if select_expr.is_empty() {
+        return Err("SELECT clause is empty".to_owned());
+    }
+
+    let after_from = &query_ref[from_pos + 6..]; // skip " FROM "
+
+    // Find optional GROUP BY
+    let group_by_pos = upper[from_pos + 6..].find(" GROUP BY ");
+    let (table_part, group_by) = match group_by_pos {
+        Some(pos) => (
+            after_from[..pos].trim(),
+            Some(after_from[pos + 10..].trim().to_owned()), // skip " GROUP BY "
+        ),
+        None => (after_from.trim(), None),
+    };
+
+    let table = table_part.to_owned();
+    if table.is_empty() {
+        return Err("table name is empty".to_owned());
+    }
+
+    // Validate table name is a safe identifier (letters, digits, _, .)
+    if !table
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    {
+        return Err(format!("invalid table name: {table}"));
+    }
+
+    Ok((select_expr, table, group_by))
+}
+
+/// Case-insensitive prefix strip helper.
+trait StripPrefixInsensitive {
+    fn strip_prefix_insensitive(&self, prefix: &str) -> Option<&str>;
+}
+
+impl StripPrefixInsensitive for str {
+    fn strip_prefix_insensitive(&self, prefix: &str) -> Option<&str> {
+        if self.len() >= prefix.len()
+            && self[..prefix.len()].eq_ignore_ascii_case(prefix)
+        {
+            Some(&self[prefix.len()..])
+        } else {
+            None
+        }
+    }
+}
+
+/// Validate an OData `$orderby` expression.
+/// Accepts: `column_name [asc|desc] [, column_name [asc|desc]]*`
+fn is_valid_orderby(orderby: &str) -> bool {
+    if orderby.is_empty() {
+        return false;
+    }
+    orderby.split(',').all(|part| {
+        let tokens: Vec<&str> = part.trim().split_whitespace().collect();
+        match tokens.len() {
+            1 => is_valid_ident(tokens[0]),
+            2 => {
+                is_valid_ident(tokens[0])
+                    && matches!(tokens[1].to_ascii_lowercase().as_str(), "asc" | "desc")
+            }
+            _ => false,
+        }
+    })
+}
+
+/// Validate a column/table identifier (letters, digits, underscores, dots).
+fn is_valid_ident(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        && !s.starts_with('.')
+        && !s.ends_with('.')
 }
 
 // ── Thresholds CRUD ─────────────────────────────────────────
@@ -539,5 +649,141 @@ fn model_to_column(m: entities::table_columns::Model) -> TableColumn {
         clickhouse_table: m.clickhouse_table,
         field_name: m.field_name,
         field_description: m.field_description,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_query_ref ─────────────────────────────────────
+
+    #[test]
+    fn parse_simple_select() {
+        let (sel, table, gb) =
+            parse_query_ref("SELECT person_id, avg_hours FROM gold.pr_cycle_time").unwrap();
+        assert_eq!(sel, "person_id, avg_hours");
+        assert_eq!(table, "gold.pr_cycle_time");
+        assert!(gb.is_none());
+    }
+
+    #[test]
+    fn parse_with_group_by() {
+        let (sel, table, gb) = parse_query_ref(
+            "SELECT person_id, avg(cycle_time_h) AS avg_hours FROM gold.pr_cycle_time GROUP BY person_id",
+        )
+        .unwrap();
+        assert_eq!(sel, "person_id, avg(cycle_time_h) AS avg_hours");
+        assert_eq!(table, "gold.pr_cycle_time");
+        assert_eq!(gb.as_deref(), Some("person_id"));
+    }
+
+    #[test]
+    fn parse_case_insensitive() {
+        let (sel, table, _) =
+            parse_query_ref("select col1, col2 from silver.commits").unwrap();
+        assert_eq!(sel, "col1, col2");
+        assert_eq!(table, "silver.commits");
+    }
+
+    #[test]
+    fn parse_with_aggregates_and_group_by() {
+        let (sel, table, gb) = parse_query_ref(
+            "SELECT org_unit_id, COUNT(DISTINCT person_id) AS headcount, AVG(focus_time_pct) AS focus FROM gold.team_summary GROUP BY org_unit_id",
+        )
+        .unwrap();
+        assert_eq!(
+            sel,
+            "org_unit_id, COUNT(DISTINCT person_id) AS headcount, AVG(focus_time_pct) AS focus"
+        );
+        assert_eq!(table, "gold.team_summary");
+        assert_eq!(gb.as_deref(), Some("org_unit_id"));
+    }
+
+    #[test]
+    fn parse_rejects_missing_from() {
+        assert!(parse_query_ref("SELECT col1, col2").is_err());
+    }
+
+    #[test]
+    fn parse_rejects_empty_select() {
+        assert!(parse_query_ref("SELECT FROM gold.table").is_err());
+    }
+
+    #[test]
+    fn parse_rejects_invalid_table_name() {
+        assert!(parse_query_ref("SELECT col FROM gold.table; DROP TABLE x").is_err());
+    }
+
+    #[test]
+    fn parse_rejects_subquery_in_table() {
+        assert!(
+            parse_query_ref("SELECT col FROM (SELECT * FROM secret.data) AS t").is_err()
+        );
+    }
+
+    #[test]
+    fn parse_rejects_table_with_where() {
+        // WHERE in the table position should fail identifier validation
+        let result = parse_query_ref("SELECT col FROM gold.t WHERE 1=1");
+        assert!(result.is_err());
+    }
+
+    // ── is_valid_orderby ────────────────────────────────────
+
+    #[test]
+    fn orderby_single_column() {
+        assert!(is_valid_orderby("metric_date"));
+    }
+
+    #[test]
+    fn orderby_with_direction() {
+        assert!(is_valid_orderby("metric_date desc"));
+        assert!(is_valid_orderby("person_id ASC"));
+    }
+
+    #[test]
+    fn orderby_multiple_columns() {
+        assert!(is_valid_orderby("metric_date desc, person_id asc"));
+    }
+
+    #[test]
+    fn orderby_dotted_column() {
+        assert!(is_valid_orderby("t.metric_date desc"));
+    }
+
+    #[test]
+    fn orderby_rejects_sql_injection() {
+        assert!(!is_valid_orderby("1; DROP TABLE metrics --"));
+        assert!(!is_valid_orderby("metric_date; DELETE FROM metrics"));
+        assert!(!is_valid_orderby("(SELECT 1)"));
+    }
+
+    #[test]
+    fn orderby_rejects_empty() {
+        assert!(!is_valid_orderby(""));
+    }
+
+    #[test]
+    fn orderby_rejects_invalid_direction() {
+        assert!(!is_valid_orderby("metric_date DROP"));
+    }
+
+    // ── is_valid_ident ──────────────────────────────────────
+
+    #[test]
+    fn ident_valid() {
+        assert!(is_valid_ident("metric_date"));
+        assert!(is_valid_ident("gold.pr_cycle_time"));
+        assert!(is_valid_ident("col1"));
+    }
+
+    #[test]
+    fn ident_rejects_special_chars() {
+        assert!(!is_valid_ident("col; DROP"));
+        assert!(!is_valid_ident("col--"));
+        assert!(!is_valid_ident(""));
+        assert!(!is_valid_ident(".leading_dot"));
+        assert!(!is_valid_ident("trailing_dot."));
     }
 }
