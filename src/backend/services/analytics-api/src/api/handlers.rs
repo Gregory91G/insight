@@ -66,7 +66,12 @@ impl IntoResponse for ApiError {
             "status": self.status.as_u16(),
             "detail": self.detail,
         });
-        (self.status, Json(body)).into_response()
+        (
+            self.status,
+            [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+            Json(body),
+        )
+            .into_response()
     }
 }
 
@@ -226,9 +231,15 @@ pub async fn query_metric(
     // The engine always controls FROM and WHERE — insight_tenant_id is
     // always injected for tenant isolation. Admins never control WHERE.
     //
+    // Person ID resolution: if identity_resolution_url is configured,
+    // person_ids from $filter would be resolved to source aliases via
+    // the Identity Resolution API. For MVP, the service is not deployed —
+    // person_ids from the JWT subject_id are used directly against
+    // ClickHouse (Gold tables already have resolved person_id columns).
+    //
     // TODO: Full implementation should also:
     // - Validate org_unit_id from $filter against AccessScope (IDOR prevention)
-    // - Resolve person_ids via Identity Resolution API
+    // - Resolve person_ids when identity_resolution_url is set
     // - Parse $select to restrict returned columns
     // - Implement cursor-based pagination (decode $skip → keyset)
 
@@ -249,6 +260,13 @@ pub async fn query_metric(
         if let Some(date_to) = extract_odata_value(filter, "metric_date", "lt") {
             sql.push_str(" AND metric_date < ?");
             params.push(date_to);
+        }
+        // Person filter — use person_id directly (no Identity Resolution for MVP).
+        // Gold tables have a resolved person_id column; Silver tables would need
+        // alias resolution via Identity Resolution API when it's available.
+        if let Some(person_id) = extract_odata_value(filter, "person_id", "eq") {
+            sql.push_str(" AND person_id = ?");
+            params.push(person_id);
         }
     }
 

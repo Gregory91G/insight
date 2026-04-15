@@ -125,6 +125,8 @@ impl RestApiCapability for ProxyModule {
 
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(5))
             .build()?;
 
         for route in &config.routes {
