@@ -1,3 +1,5 @@
+.env.local
+up-orb.sh
 __pycache__/
 *.pyc
 .venv/
