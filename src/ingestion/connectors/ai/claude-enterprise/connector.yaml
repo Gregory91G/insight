@@ -1109,6 +1109,10 @@ streams:
               {{ config['insight_tenant_id'] }}-{{ config['insight_source_id']
               }}-{{ stream_interval['start_time'][:10] }}-{{ record.get('connector_name') }}
 
+# default_concurrency: 1 is intentional — the Enterprise Analytics API enforces
+# org-level rate limits (not documented numerically). Sequential stream processing
+# avoids rate-limit exhaustion during backfill. Consider bumping to 2-3 after
+# observing real API behavior in production.
 concurrency_level:
   type: ConcurrencyLevel
   default_concurrency: 1

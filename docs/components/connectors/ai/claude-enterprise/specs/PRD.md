@@ -351,11 +351,11 @@ The connector **MUST NOT** emit requests for dates that fall within the Anthropi
 
 Each stream **MUST** use a primary key to ensure that re-running the connector for an overlapping date range does not produce duplicate records:
 
-- `claude_enterprise_users`: key = `unique` (computed as `{date}:{user.id}`)
+- `claude_enterprise_users`: key = `unique_key` (computed as `{date}:{user.id}`)
 - `claude_enterprise_summaries`: key = `date`
-- `claude_enterprise_chat_projects`: key = `unique` (computed as `{date}:{project_id}`)
-- `claude_enterprise_skills`: key = `unique` (computed as `{date}:{skill_name}`)
-- `claude_enterprise_connectors`: key = `unique` (computed as `{date}:{connector_name}`)
+- `claude_enterprise_chat_projects`: key = `unique_key` (computed as `{date}:{project_id}`)
+- `claude_enterprise_skills`: key = `unique_key` (computed as `{date}:{skill_name}`)
+- `claude_enterprise_connectors`: key = `unique_key` (computed as `{date}:{connector_name}`)
 - `claude_enterprise_collection_runs`: key = `run_id`
 
 **Rationale**: Incremental sync may revisit dates that have already been fetched (for example, if the API's lag window moved). Primary keys ensure idempotent extraction regardless.
@@ -613,7 +613,7 @@ The following checklist domains have been evaluated and determined not applicabl
 | **Safety (SAFE)** | Pure data-extraction pipeline. No interaction with physical systems, no potential for harm to people, property, or environment. |
 | **Performance (PERF)** | Batch connector with native API pagination. No caching, pooling, or latency optimization needed. Rate-limit handling (exponential backoff on 429) is the only performance concern, documented in SS3.1. |
 | **Reliability (REL)** | Idempotent extraction via deduplication keys. No distributed state, no transactions, no saga patterns. Recovery is handled by re-running the sync (Airbyte framework manages state). |
-| **Usability (UX)** | No user-facing interface. Configuration is a small set of fields (tenant_id, admin_api_key, optional base URL, start date, source id) in the Airbyte UI. |
+| **Usability (UX)** | No user-facing interface. Configuration is a small set of fields (tenant_id, analytics_api_key, optional base URL, start date, source id) in the Airbyte UI. |
 | **Compliance (COMPL)** | Work emails are personal data under GDPR. Retention, deletion, and access controls are delegated to the Airbyte platform and destination operator. The connector must not store credentials outside the platform's secret management. |
 | **Maintainability (MAINT)** | Declarative YAML manifest — no custom code to maintain. Schema changes are handled by updating field definitions in the manifest. |
 | **Testing — custom test tooling only** | Acceptance criteria (TEST-PRD-001) are documented in §9, and requirements use concrete, testable MUST/MUST NOT language (TEST-PRD-002). Only *custom test tooling* is N/A — the declarative manifest is validated by the Airbyte framework plus the §9 criteria, which are sufficient for acceptance without hand-written unit tests. |

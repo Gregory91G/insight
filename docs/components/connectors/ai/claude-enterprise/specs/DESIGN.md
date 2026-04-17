@@ -42,7 +42,7 @@
 
 The Claude Enterprise connector extracts per-user daily activity, organization-wide summaries, chat project usage, and skill/connector adoption from five Anthropic Enterprise Analytics API endpoints and delivers them to the Bronze layer of the Insight platform. The connector is implemented as an Airbyte declarative manifest — a YAML file that defines all streams, authentication, pagination, incremental sync, and schemas without code. Silver and Gold transformations are out of scope for this connector iteration.
 
-The connector defines five data streams and one monitoring stream:
+The connector defines five data streams:
 
 1. **`claude_enterprise_users`** — per-user-per-day engagement metrics via `GET /v1/organizations/analytics/users` (incremental, date-based)
 2. **`claude_enterprise_summaries`** — daily organization summary via `GET /v1/organizations/analytics/summaries` (incremental, date-based, multi-day response)
@@ -50,9 +50,9 @@ The connector defines five data streams and one monitoring stream:
 4. **`claude_enterprise_skills`** — per-skill-per-day adoption via `GET /v1/organizations/analytics/skills` (incremental)
 5. **`claude_enterprise_connectors`** — per-connector-per-day adoption via `GET /v1/organizations/analytics/connectors` (incremental)
 
-A sixth stream (`claude_enterprise_collection_runs`) captures connector execution metadata for operational monitoring.
+A sixth Bronze table (`claude_enterprise_collection_runs`) is documented in §3.7 for operational monitoring but is **not emitted by the Airbyte manifest** — it is produced by the Argo orchestrator pipeline (see PRD §5.6 deferral note).
 
-All per-user data flows through `user_email` (in `users`) and `created_by_email` (in `chat_projects`) as identity keys. Aggregate streams (`summaries`, `skills`, `connectors`) do not carry per-user identity. The monitoring stream does not carry any user identity.
+All per-user data flows through `user_email` (in `users`) and `created_by_email` (in `chat_projects`) as identity keys. Aggregate streams (`summaries`, `skills`, `connectors`) do not carry per-user identity. The orchestrator-produced `collection_runs` table does not carry any user identity.
 
 #### System Context
 
@@ -226,7 +226,7 @@ The API enforces organization-level rate limits (default values are not document
 
 ### 3.2 Component Model
 
-The Claude Enterprise connector is a single declarative manifest that defines five data streams and one monitoring stream. There are no custom code components.
+The Claude Enterprise connector is a single declarative manifest that defines five data streams. There are no custom code components.
 
 #### Component Diagram
 
@@ -293,136 +293,16 @@ Defines all 5 data streams with: Enterprise Analytics API endpoint paths, API ke
 
 ##### Manifest Skeleton
 
-> **Note**: The YAML block below is a **structural skeleton** included to illustrate Airbyte framework usage (authenticator, cursor, retriever, transformations) — not a full manifest. The authoritative configuration is the file at `src/ingestion/connectors/ai/claude-enterprise/connector.yaml` once implementation begins. If this skeleton and the real manifest ever diverge, **the file wins**; the skeleton is reference-only and may go stale between DESIGN revisions.
+The manifest uses Airbyte declarative framework v7.0.4. Key structural patterns (authoritative source: `src/ingestion/connectors/ai/claude-enterprise/connector.yaml`):
 
-The manifest follows the Airbyte declarative framework structure. Key structural elements:
-
-```yaml
-version: "6.2.0"
-type: DeclarativeSource
-check:
-  type: CheckStream
-  stream_names: [claude_enterprise_summaries]
-
-definitions:
-  api_key_authenticator:
-    type: ApiKeyAuthenticator
-    api_token: "{{ config['analytics_api_key'] }}"
-    header: x-api-key
-
-  anthropic_headers:
-    anthropic-version: "2023-06-01"
-    Content-Type: application/json
-
-  retryable_error_handler:
-    type: DefaultErrorHandler
-    backoff_strategies:
-      - type: WaitTimeFromHeader
-        header: Retry-After
-    response_filters:
-      - type: HttpResponseFilter
-        action: RETRY
-        http_codes: [429, 503]
-      - type: HttpResponseFilter
-        action: FAIL
-        http_codes: [401, 404]
-
-  cursor_paginator:
-    type: DefaultPaginator
-    pagination_strategy:
-      type: CursorPagination
-      cursor_value: "{{ response.get('next_page', '') }}"
-      stop_condition: "{{ response.get('next_page') is none or response.get('next_page') == '' }}"
-    page_token_option:
-      type: RequestOption
-      inject_into: request_parameter
-      field_name: page
-
-streams:
-  - type: DeclarativeStream
-    name: claude_enterprise_users
-    primary_key: [unique_key]
-    incremental_sync:
-      type: DatetimeBasedCursor
-      cursor_field: date
-      cursor_datetime_formats: ["%Y-%m-%d"]
-      datetime_format: "%Y-%m-%d"
-      start_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ config.get('start_date', day_delta(-14, format='%Y-%m-%d')) }}"
-        datetime_format: "%Y-%m-%d"
-        min_datetime: "2026-01-01"
-      end_datetime:
-        type: MinMaxDatetime
-        datetime: "{{ (now_utc() - duration('P3D')).strftime('%Y-%m-%d') }}"
-        datetime_format: "%Y-%m-%d"
-      step: P1D
-      cursor_granularity: P1D
-      start_time_option:
-        type: RequestOption
-        field_name: date
-        inject_into: request_parameter
-    retriever:
-      type: SimpleRetriever
-      requester:
-        type: HttpRequester
-        url_base: "{{ config.get('base_url', 'https://api.anthropic.com') }}"
-        path: /v1/organizations/analytics/users
-        http_method: GET
-        authenticator: { $ref: "#/definitions/api_key_authenticator" }
-        request_headers: { $ref: "#/definitions/anthropic_headers" }
-        error_handler: { $ref: "#/definitions/retryable_error_handler" }
-      record_selector:
-        type: RecordSelector
-        extractor:
-          type: DpathExtractor
-          field_path: [data]
-      paginator: { $ref: "#/definitions/cursor_paginator" }
-    transformations:
-      - type: AddFields
-        fields:
-          - { path: [tenant_id],         value: "{{ config['tenant_id'] }}" }
-          - { path: [insight_source_id], value: "{{ config.get('insight_source_id', '') }}" }
-          - { path: [collected_at],      value: "{{ now_utc().strftime('%Y-%m-%dT%H:%M:%SZ') }}" }
-          - { path: [data_source],       value: "insight_claude_enterprise" }
-          - { path: [user_id],           value: "{{ record.get('user', {}).get('id') }}" }
-          - { path: [user_email],        value: "{{ record.get('user', {}).get('email_address') }}" }
-          - { path: [unique],            value: "{{ stream_interval['start_time'] }}:{{ record.get('user', {}).get('id') }}" }
-  # ... remaining streams follow the same pattern
-
-  - type: DeclarativeStream
-    name: claude_enterprise_summaries
-    primary_key: [date]
-    incremental_sync:
-      type: DatetimeBasedCursor
-      cursor_field: date
-      step: P31D            # <-- summaries-specific; stays within API's 31-day window
-      # ... start/end as above
-      start_time_option:
-        type: RequestOption
-        field_name: starting_date
-        inject_into: request_parameter
-      end_time_option:
-        type: RequestOption
-        field_name: ending_date
-        inject_into: request_parameter
-    retriever:
-      # ... (no paginator needed — single response per window)
-
-spec:
-  type: Spec
-  connection_specification:
-    type: object
-    required: [tenant_id, analytics_api_key]
-    properties:
-      tenant_id:        { type: string, title: Tenant ID,              order: 0 }
-      analytics_api_key:{ type: string, title: Analytics API Key,      airbyte_secret: true, order: 1 }
-      insight_source_id:{ type: string, title: Source Instance ID,     default: "",  order: 2 }
-      start_date:       { type: string, title: Start Date,             default: "",  order: 3 }
-      base_url:         { type: string, title: Base URL (override),    default: "https://api.anthropic.com", order: 4 }
-```
-
-This is a structural skeleton — the full manifest will live in `src/ingestion/connectors/ai/claude-enterprise/connector.yaml` once implementation begins.
+- **Auth**: `definitions.linked.HttpRequester.authenticator` — `ApiKeyAuthenticator` with `x-api-key` header + `anthropic-version: 2023-06-01`
+- **Error handling**: `definitions.retryable_error_handler` (NOT under `linked` — per create.md §3.1) — `CompositeErrorHandler` with 429 RATE_LIMITED + Retry-After, 5xx RETRY + exponential backoff, 401/404 FAIL
+- **Pagination**: `definitions.linked.SimpleRetriever.paginator` — `CursorPagination` on `next_page` token (used by users, chat_projects, skills, connectors; summaries uses `NoPagination`)
+- **Cursor**: `DatetimeBasedCursor` on `date` field, `min_datetime: "2026-01-01"`, `end_datetime: day_delta(-3)`, step P1D (P31D for summaries)
+- **Transformations**: `AddFields` with `type: AddedFieldDefinition` per field — injects `tenant_id`, `source_id`, `data_source`, `collected_at`, `unique_key` + stream-specific flattened fields
+- **Check**: `claude_enterprise_summaries` (lightest stream)
+- **Base URL**: `{{ config.get('base_url', 'https://api.anthropic.com') }}` — overridable for dev/test
+- **Spec**: `insight_tenant_id` + `insight_source_id` (required), `analytics_api_key` (required, airbyte_secret), `start_date` + `base_url` (optional)
 
 ##### Responsibility boundaries
 
@@ -606,7 +486,7 @@ These columns are not defined in the manifest schema but are present in all Bron
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `insight_source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected from `insight_source_id` config, DEFAULT '' |
 | `unique_key` | String | Primary key — computed as `{date}:{user_id}` |
 | `date` | String | Activity date (YYYY-MM-DD) — cursor |
 | `user_id` | String | Anthropic user ID — flattened from `user.id` |
@@ -651,7 +531,7 @@ One row per `(date, user_id)`. Incremental by `date`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `insight_source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected from `insight_source_id` config, DEFAULT '' |
 | `date` | String | Summary date (YYYY-MM-DD) — primary key + cursor |
 | `daily_active_user_count` | Int64 | DAU |
 | `weekly_active_user_count` | Int64 | WAU (7-day rolling window ending on `date`) |
@@ -671,7 +551,7 @@ One row per day. Incremental by `date`. Each API request covers up to 31 days.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `insight_source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected from `insight_source_id` config, DEFAULT '' |
 | `unique_key` | String | Primary key — computed as `{date}:{project_id}` |
 | `date` | String | Activity date (YYYY-MM-DD) — cursor |
 | `project_id` | String | Normalized project ID (format `claude_proj_{id}`) |
@@ -692,7 +572,7 @@ One row per `(date, project_id)`. Incremental by `date`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `insight_source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected from `insight_source_id` config, DEFAULT '' |
 | `unique_key` | String | Primary key — computed as `{date}:{skill_name}` |
 | `date` | String | Activity date (YYYY-MM-DD) — cursor |
 | `skill_name` | String | Skill identifier |
@@ -713,7 +593,7 @@ One row per `(date, skill_name)`. Incremental by `date`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `insight_source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected from `insight_source_id` config, DEFAULT '' |
 | `unique_key` | String | Primary key — computed as `{date}:{connector_name}` |
 | `date` | String | Activity date (YYYY-MM-DD) — cursor |
 | `connector_name` | String | Normalized connector name (e.g., "atlassian" covers multiple naming variants) |
@@ -734,7 +614,7 @@ One row per `(date, connector_name)`. Incremental by `date`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `tenant_id` | UUID | Workspace isolation key — framework-injected |
-| `insight_source_id` | String | Connector instance identifier — framework-injected, DEFAULT '' |
+| `source_id` | String | Connector instance identifier — framework-injected from `insight_source_id` config, DEFAULT '' |
 | `run_id` | String | Unique run identifier — primary key |
 | `started_at` | DateTime | Run start time |
 | `completed_at` | DateTime | Run end time |
