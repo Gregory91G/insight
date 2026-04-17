@@ -217,69 +217,64 @@ WHERE p.email IS NOT NULL AND p.email != ''
 GROUP BY lower(p.email), toDate(parseDateTimeBestEffort(p.join_time));
 
 -- =====================================================================
--- 9. COLLAB BULLET ROWS — all collab metrics unpivoted
+-- 9. COLLAB BULLET ROWS — all collab metrics unpivoted (with org_unit_id)
 -- =====================================================================
 CREATE VIEW IF NOT EXISTS insight.collab_bullet_rows AS
-SELECT person_id, metric_date, 'm365_emails_sent' AS metric_key, emails_sent AS metric_value
-FROM insight.comms_daily
+SELECT c.person_id, p.org_unit_id, c.metric_date, 'm365_emails_sent' AS metric_key, c.emails_sent AS metric_value
+FROM insight.comms_daily c LEFT JOIN insight.people p ON c.person_id = p.person_id
 UNION ALL
-SELECT person_id, metric_date, 'zoom_calls', zoom_calls
-FROM insight.comms_daily
+SELECT c.person_id, p.org_unit_id, c.metric_date, 'zoom_calls', c.zoom_calls
+FROM insight.comms_daily c LEFT JOIN insight.people p ON c.person_id = p.person_id
 UNION ALL
-SELECT person_id, metric_date, 'meeting_hours', meeting_hours
-FROM insight.comms_daily
+SELECT c.person_id, p.org_unit_id, c.metric_date, 'meeting_hours', c.meeting_hours
+FROM insight.comms_daily c LEFT JOIN insight.people p ON c.person_id = p.person_id
 UNION ALL
-SELECT person_id, metric_date, 'm365_teams_messages', teams_messages
-FROM insight.comms_daily
+SELECT c.person_id, p.org_unit_id, c.metric_date, 'm365_teams_messages', c.teams_messages
+FROM insight.comms_daily c LEFT JOIN insight.people p ON c.person_id = p.person_id
 UNION ALL
-SELECT person_id, metric_date, 'm365_files_shared', files_shared
-FROM insight.comms_daily
+SELECT c.person_id, p.org_unit_id, c.metric_date, 'm365_files_shared', c.files_shared
+FROM insight.comms_daily c LEFT JOIN insight.people p ON c.person_id = p.person_id
 UNION ALL
-SELECT person_id, metric_date, 'meeting_free',
-    if(meeting_hours + teams_meetings = 0, 1, 0)
-FROM insight.comms_daily;
+SELECT c.person_id, p.org_unit_id, c.metric_date, 'meeting_free',
+    if(c.meeting_hours + c.teams_meetings = 0, 1, 0)
+FROM insight.comms_daily c LEFT JOIN insight.people p ON c.person_id = p.person_id;
 
 -- =====================================================================
--- 10. TASK DELIVERY BULLET ROWS
+-- 10. TASK DELIVERY BULLET ROWS (with org_unit_id)
 -- =====================================================================
 CREATE VIEW IF NOT EXISTS insight.task_delivery_bullet_rows AS
-SELECT person_id, toString(metric_date) AS metric_date, 'tasks_completed' AS metric_key, toFloat64(tasks_closed) AS metric_value
-FROM insight.jira_closed_tasks
+SELECT j.person_id, p.org_unit_id, toString(j.metric_date) AS metric_date, 'tasks_completed' AS metric_key, toFloat64(j.tasks_closed) AS metric_value
+FROM insight.jira_closed_tasks j LEFT JOIN insight.people p ON j.person_id = p.person_id
 UNION ALL
-SELECT person_id, toString(metric_date), 'task_reopen_rate', toFloat64(0)
-FROM insight.jira_closed_tasks
+SELECT j.person_id, p.org_unit_id, toString(j.metric_date), 'task_reopen_rate', toFloat64(0)
+FROM insight.jira_closed_tasks j LEFT JOIN insight.people p ON j.person_id = p.person_id
 UNION ALL
-SELECT person_id, toString(metric_date), 'due_date_compliance',
-    if(has_due_date_count > 0, round(on_time_count / has_due_date_count * 100, 1), 0)
-FROM insight.jira_closed_tasks;
+SELECT j.person_id, p.org_unit_id, toString(j.metric_date), 'due_date_compliance',
+    if(j.has_due_date_count > 0, round(j.on_time_count / j.has_due_date_count * 100, 1), 0)
+FROM insight.jira_closed_tasks j LEFT JOIN insight.people p ON j.person_id = p.person_id;
 
 -- =====================================================================
--- 11. CODE QUALITY BULLET ROWS
+-- 11. CODE QUALITY BULLET ROWS (with org_unit_id)
 -- =====================================================================
 CREATE VIEW IF NOT EXISTS insight.code_quality_bullet_rows AS
-SELECT person_id, toString(metric_date) AS metric_date, 'bugs_fixed' AS metric_key, toFloat64(bugs_fixed) AS metric_value
-FROM insight.jira_closed_tasks
+SELECT j.person_id, p.org_unit_id, toString(j.metric_date) AS metric_date, 'bugs_fixed' AS metric_key, toFloat64(j.bugs_fixed) AS metric_value
+FROM insight.jira_closed_tasks j LEFT JOIN insight.people p ON j.person_id = p.person_id
 UNION ALL
-SELECT person_id, toString(metric_date), 'prs_per_dev', toFloat64(0)
-FROM insight.jira_closed_tasks
+SELECT j.person_id, p.org_unit_id, toString(j.metric_date), 'prs_per_dev', toFloat64(0)
+FROM insight.jira_closed_tasks j LEFT JOIN insight.people p ON j.person_id = p.person_id
 UNION ALL
-SELECT person_id, toString(metric_date), 'pr_cycle_time', toFloat64(0)
-FROM insight.jira_closed_tasks
+SELECT j.person_id, p.org_unit_id, toString(j.metric_date), 'pr_cycle_time', toFloat64(0)
+FROM insight.jira_closed_tasks j LEFT JOIN insight.people p ON j.person_id = p.person_id
 UNION ALL
-SELECT person_id, toString(metric_date), 'build_success', toFloat64(0)
-FROM insight.jira_closed_tasks;
+SELECT j.person_id, p.org_unit_id, toString(j.metric_date), 'build_success', toFloat64(0)
+FROM insight.jira_closed_tasks j LEFT JOIN insight.people p ON j.person_id = p.person_id;
 
 -- =====================================================================
--- 12. AI BULLET ROWS — empty placeholder (no AI data yet)
+-- 12. AI BULLET ROWS — empty placeholder (with org_unit_id)
 -- =====================================================================
 CREATE VIEW IF NOT EXISTS insight.ai_bullet_rows AS
-SELECT
-    '' AS person_id,
-    '' AS metric_date,
-    '' AS metric_key,
-    toFloat64(0) AS metric_value
-FROM system.one
-WHERE 0;
+SELECT '' AS person_id, '' AS org_unit_id, '' AS metric_date, '' AS metric_key, toFloat64(0) AS metric_value
+FROM system.one WHERE 0;
 
 -- =====================================================================
 -- 13. EXEC SUMMARY — FE: RawExecSummaryRow
@@ -353,11 +348,12 @@ LEFT JOIN (
 WHERE p.status = 'Active';
 
 -- =====================================================================
--- 15. IC KPIS — FE: RawIcAggregateRow
+-- 15. IC KPIS — FE: RawIcAggregateRow (with org_unit_id)
 -- =====================================================================
 CREATE VIEW IF NOT EXISTS insight.ic_kpis AS
 SELECT
     j.person_id                                     AS person_id,
+    p.org_unit_id                                   AS org_unit_id,
     toString(j.metric_date)                         AS metric_date,
     toFloat64(0)                                     AS loc,
     toFloat64(0)                                     AS ai_loc_share_pct,
@@ -369,15 +365,17 @@ SELECT
     CAST(NULL AS Nullable(Float64))                  AS build_success_pct,
     toFloat64(0)                                     AS ai_sessions
 FROM insight.jira_closed_tasks j
+LEFT JOIN insight.people p ON j.person_id = p.person_id
 LEFT JOIN insight.comms_daily c ON j.person_id = c.person_id
     AND toString(j.metric_date) = c.metric_date;
 
 -- =====================================================================
--- 16. IC CHART DELIVERY — FE: RawDeliveryTrendRow
+-- 16. IC CHART DELIVERY — FE: RawDeliveryTrendRow (with org_unit_id)
 -- =====================================================================
 CREATE VIEW IF NOT EXISTS insight.ic_chart_delivery AS
 SELECT
-    person_id,
+    sub.person_id,
+    p.org_unit_id AS org_unit_id,
     toString(week_start) AS date_bucket,
     toString(week_start) AS metric_date,
     toUInt64(0)          AS commits,
@@ -387,14 +385,16 @@ FROM (
     SELECT person_id, toStartOfWeek(metric_date) AS week_start, tasks_closed
     FROM insight.jira_closed_tasks
 ) sub
-GROUP BY person_id, week_start;
+LEFT JOIN insight.people p ON sub.person_id = p.person_id
+GROUP BY sub.person_id, p.org_unit_id, week_start;
 
 -- =====================================================================
--- 17. IC CHART LOC — FE: RawLocTrendRow (placeholder, no git data)
+-- 17. IC CHART LOC — FE: RawLocTrendRow (placeholder, with org_unit_id)
 -- =====================================================================
 CREATE VIEW IF NOT EXISTS insight.ic_chart_loc AS
 SELECT
-    person_id,
+    sub.person_id,
+    p.org_unit_id AS org_unit_id,
     toString(week_start) AS date_bucket,
     toString(week_start) AS metric_date,
     toFloat64(0) AS ai_loc,
@@ -404,35 +404,22 @@ FROM (
     SELECT person_id, toStartOfWeek(metric_date) AS week_start
     FROM insight.jira_closed_tasks
 ) sub
-GROUP BY person_id, week_start;
+LEFT JOIN insight.people p ON sub.person_id = p.person_id
+GROUP BY sub.person_id, p.org_unit_id, week_start;
 
 -- =====================================================================
--- 18. IC DRILL — empty placeholder
+-- 18. IC DRILL — empty placeholder (with org_unit_id)
 -- =====================================================================
 CREATE VIEW IF NOT EXISTS insight.ic_drill AS
-SELECT
-    '' AS person_id,
-    '' AS metric_date,
-    '' AS drill_id,
-    '' AS title,
-    '' AS source,
-    '' AS src_class,
-    '' AS value,
-    '' AS filter,
-    CAST([] AS Array(String)) AS columns,
-    CAST([] AS Array(String)) AS rows
-FROM system.one
-WHERE 0;
+SELECT '' AS person_id, '' AS org_unit_id, '' AS metric_date, '' AS drill_id,
+    '' AS title, '' AS source, '' AS src_class, '' AS value, '' AS filter,
+    CAST([] AS Array(String)) AS columns, CAST([] AS Array(String)) AS rows
+FROM system.one WHERE 0;
 
 -- =====================================================================
--- 19. IC TIMEOFF — FE: RawTimeOffRow (placeholder, no leave data)
+-- 19. IC TIMEOFF — FE: RawTimeOffRow (placeholder, with org_unit_id)
 -- =====================================================================
 CREATE VIEW IF NOT EXISTS insight.ic_timeoff AS
-SELECT
-    lower(e.workEmail) AS person_id,
-    '' AS metric_date,
-    toUInt32(0) AS days,
-    '' AS date_range,
-    '' AS bamboo_hr_url
-FROM bronze_bamboohr.employees e
-WHERE 1 = 0;
+SELECT '' AS person_id, '' AS org_unit_id, '' AS metric_date,
+    toUInt32(0) AS days, '' AS date_range, '' AS bamboo_hr_url
+FROM system.one WHERE 0;
