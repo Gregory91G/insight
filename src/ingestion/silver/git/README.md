@@ -37,7 +37,7 @@ Git silver models. Two layers:
 
 | Model | Grain | Metrics |
 |---|---|---|
-| `mtr_git_person_totals` | `(tenant_id, person_key)` | `prs_created`, `prs_merged`, `avg_pr_cycle_time_h`, `commits`, `loc`, `clean_loc`, `reviews_given` |
+| `mtr_git_person_totals` | `(tenant_id, person_key)` | `prs_created`, `prs_merged`, `avg_pr_cycle_time_h`, `commits`, `loc`, `clean_loc` |
 | `mtr_git_person_weekly` | `(tenant_id, person_key, week)` | `commits`, `prs_merged`, `code_loc`, `spec_lines` |
 
 ## Identity
@@ -49,6 +49,18 @@ email is empty (Bitbucket Cloud PR authors have no email).
 Once identity resolution is wired end-to-end via `class_people.person_id`, the
 facts will resolve `person_key → person_id` without changing downstream
 metrics.
+
+### Reviewer namespace (separate)
+
+`fct_git_review.person_key = lower(reviewer_name)` — GitHub login or
+Bitbucket display_name. This is a **different namespace** from the
+email-based key on `fct_git_pr` / `fct_git_commit`, so the same human will
+not match across reviews and commits until an identity bridge resolves
+login ↔ email.
+
+Consequence for now: `reviews_given` is **not** included in
+`mtr_git_person_totals`. It returns once the bridge lands. `fct_git_review`
+remains available for reviewer-scoped analysis.
 
 ## Running
 
@@ -65,6 +77,10 @@ dbt run --select tag:silver
   staging-level heuristic (set to `updated_on` on terminal states). Accurate
   to within sync cadence for typical PRs; improves when the Bitbucket Cloud
   `pr_activity` stream lands.
+- `mtr_git_person_weekly` buckets every metric by **commit-date week**,
+  including `prs_merged` (week is the PR's merge-commit week when
+  `merge_commit_hash` resolves, else `closed_on` week). All CTEs share the
+  same week semantic so the final join never splits a person across rows.
 - `file_category` regex matches common test/spec/config path patterns.
 - PR `state` values are source-case-preserved (`MERGED`, `OPEN`). Facts expose
   `state_norm = lower(state)` for downstream use.

@@ -4,6 +4,11 @@
     tags=['silver']
 ) }}
 
+-- reviews_given intentionally excluded: fct_git_review.person_key lives in
+-- the reviewer-login namespace (GitHub login, Bitbucket display_name), which
+-- does not match the email-based person_key used by commits/PRs. Returns
+-- once identity resolution bridges the two namespaces.
+
 WITH prs AS (
     SELECT
         tenant_id,
@@ -36,28 +41,21 @@ clean AS (
       AND file_category = 'code'
       AND person_key != ''
     GROUP BY tenant_id, person_key
-),
-reviews AS (
-    SELECT
-        tenant_id,
-        person_key,
-        count() AS reviews_given
-    FROM {{ ref('fct_git_review') }}
-    WHERE status IN ('APPROVED', 'CHANGES_REQUESTED', 'COMMENTED')
-      AND person_key != ''
-    GROUP BY tenant_id, person_key
 )
 SELECT
-    coalesce(prs.tenant_id, commits.tenant_id, clean.tenant_id, reviews.tenant_id) AS tenant_id,
-    coalesce(prs.person_key, commits.person_key, clean.person_key, reviews.person_key) AS person_key,
+    coalesce(prs.tenant_id, commits.tenant_id, clean.tenant_id)    AS tenant_id,
+    coalesce(prs.person_key, commits.person_key, clean.person_key) AS person_key,
+    concat(
+        coalesce(prs.tenant_id, commits.tenant_id, clean.tenant_id),
+        '|',
+        coalesce(prs.person_key, commits.person_key, clean.person_key)
+    ) AS unique_key,
     coalesce(prs.prs_created, 0)          AS prs_created,
     coalesce(prs.prs_merged, 0)           AS prs_merged,
     prs.avg_pr_cycle_time_h               AS avg_pr_cycle_time_h,
     coalesce(commits.commits, 0)          AS commits,
     coalesce(commits.loc, 0)              AS loc,
-    coalesce(clean.clean_loc, 0)          AS clean_loc,
-    coalesce(reviews.reviews_given, 0)    AS reviews_given
+    coalesce(clean.clean_loc, 0)          AS clean_loc
 FROM prs
 FULL OUTER JOIN commits USING (tenant_id, person_key)
 FULL OUTER JOIN clean   USING (tenant_id, person_key)
-FULL OUTER JOIN reviews USING (tenant_id, person_key)
