@@ -1,11 +1,11 @@
-{% macro bootstrap_inputs_from_history(
+{% macro identity_input_from_history(
     fields_history_ref,
     source_type,
     identity_fields,
     deactivation_condition
 ) %}
 {#
-  Generates bootstrap_inputs rows from a fields_history model.
+  Generates identity_inputs rows from a fields_history model.
   Produces UPSERT rows for identity-relevant field changes, and DELETE rows
   for all identity fields when a deactivation condition is met.
 
@@ -26,7 +26,7 @@
                             field_name, old_value, new_value, updated_at.
                             Example: "field_name = 'status' AND new_value = 'Inactive'"
 
-  Output columns (match bootstrap_inputs schema):
+  Output columns (match identity_inputs schema):
     insight_tenant_id, insight_source_id, insight_source_type, source_account_id,
     alias_type, alias_value, alias_field_name, operation_type, _synced_at
 #}
@@ -43,8 +43,9 @@ WITH history AS (
 upserts AS (
     {% for f in identity_fields %}
     SELECT
-        tenant_id AS insight_tenant_id,
-        source_id AS insight_source_id,
+        -- TEMPORARY: sipHash128 → UUID until tenants/sources tables exist (REC-IR-04)
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         entity_id AS source_account_id,
         '{{ f.alias_type }}' AS alias_type,
@@ -73,8 +74,9 @@ deactivation_events AS (
 deletes AS (
     {% for f in identity_fields %}
     SELECT
-        d.tenant_id AS insight_tenant_id,
-        d.source_id AS insight_source_id,
+        -- TEMPORARY: sipHash128 → UUID until tenants/sources tables exist (REC-IR-04)
+        toUUID(UUIDNumToString(sipHash128(coalesce(d.tenant_id, '')))) AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(d.source_id, '')))) AS insight_source_id,
         '{{ source_type }}' AS insight_source_type,
         d.entity_id AS source_account_id,
         '{{ f.alias_type }}' AS alias_type,

@@ -1,29 +1,28 @@
--- Phase 1 (Initial Seed): Claude Admin users → identity.bootstrap_inputs
+-- Phase 1 (Initial Seed): Claude Admin users → identity.identity_inputs
 -- One-time seed. Writes raw alias observations from Claude Admin Bronze data.
--- Raw values preserved — normalization applied at read time by BootstrapJob.
+-- Raw values preserved — normalization applied at read time by downstream consumers.
 -- Idempotent: skips rows that already exist (by source + alias_type + alias_value + account).
 -- Dedup: takes latest row per email by _airbyte_extracted_at.
 -- Source: docs/domain/identity-resolution/specs/DECOMPOSITION.md §2.1
 --
--- Run: dbt run --select seed_bootstrap_inputs_from_claude_admin
+-- Run: dbt run --select seed_identity_input_from_claude_admin
 --
--- Test manually: http://localhost:30123/play  (user: default, password: clickhouse_local)
---   or:          http://localhost:8123/play
+-- Test manually: http://localhost:30123/play
 --
 -- NOTE: schema='staging' is intentional. Unlike persons/aliases which write
--- directly to canonical tables, bootstrap_inputs uses a multi-source union
--- pattern: each source writes to staging.*, then identity.bootstrap_inputs
--- (VIEW) aggregates them via union_by_tag. Consistent with bamboohr/zoom
--- connector models that also target staging.
+-- directly to canonical tables, identity_inputs uses a multi-source union
+-- pattern: each source writes to staging.*, then identity.identity_inputs
+-- (VIEW) aggregates them via union_by_tag('identity:input'). Consistent with
+-- bamboohr/zoom connector models that also target staging.
 
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
     schema='staging',
-    tags=['identity:seed', 'silver', 'silver:bootstrap_inputs']
+    tags=['identity:seed', 'identity', 'identity:input']
 ) }}
 
--- Column set matches bootstrap_inputs_from_history macro output.
+-- Column set matches identity_input_from_history macro output.
 -- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
 
 WITH latest AS (
@@ -36,13 +35,13 @@ WITH latest AS (
 observations AS (
     -- email
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, '')))        AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, ''))))        AS insight_tenant_id,
         toUUID('00000000-0000-0000-0000-000000000000')              AS insight_source_id,
-        'claude_admin'                                              AS insight_source_type,
+        'claude_admin'                                               AS insight_source_type,
         source_id                                                   AS source_account_id,
         'email'                                                     AS alias_type,
         email                                                       AS alias_value,
-        'bronze_claude_admin.claude_admin_users.email'              AS alias_field_name,
+        'bronze_claude_admin.claude_admin_users.email'                AS alias_field_name,
         'UPSERT'                                                    AS operation_type,
         now64(3)                                                    AS _synced_at
     FROM latest
@@ -51,7 +50,7 @@ observations AS (
 
     -- platform_id (Claude Admin user ID)
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))),
         toUUID('00000000-0000-0000-0000-000000000000'),
         'claude_admin',
         source_id,
@@ -67,7 +66,7 @@ observations AS (
 
     -- display_name
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))),
         toUUID('00000000-0000-0000-0000-000000000000'),
         'claude_admin',
         source_id,

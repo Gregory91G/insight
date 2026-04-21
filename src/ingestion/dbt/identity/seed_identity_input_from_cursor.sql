@@ -1,26 +1,26 @@
--- Phase 1 (Initial Seed): Cursor members → identity.bootstrap_inputs
+-- Phase 1 (Initial Seed): Cursor members → identity.identity_inputs
 -- One-time seed. Writes raw alias observations from Cursor Bronze data.
--- Raw values preserved — normalization applied at read time by BootstrapJob.
+-- Raw values preserved — normalization applied at read time by downstream consumers.
 -- Idempotent: skips rows that already exist (by source + alias_type + alias_value + account).
 -- Source: docs/domain/identity-resolution/specs/DECOMPOSITION.md §2.1
 --
--- Run: dbt run --select seed_bootstrap_inputs_from_cursor
+-- Run: dbt run --select seed_identity_input_from_cursor
 --
 -- NOTE: schema='staging' is intentional. Unlike persons/aliases which write
--- directly to canonical tables, bootstrap_inputs uses a multi-source union
--- pattern: each source writes to staging.*, then identity.bootstrap_inputs
--- (VIEW) aggregates them via union_by_tag. Consistent with bamboohr/zoom
--- connector models that also target staging.
+-- directly to canonical tables, identity_inputs uses a multi-source union
+-- pattern: each source writes to staging.*, then identity.identity_inputs
+-- (VIEW) aggregates them via union_by_tag('identity:input'). Consistent with
+-- bamboohr/zoom connector models that also target staging.
 
 {{ config(
     materialized='incremental',
     incremental_strategy='append',
     schema='staging',
-    tags=['identity:seed', 'silver', 'silver:bootstrap_inputs']
+    tags=['identity:seed', 'identity', 'identity:input']
 ) }}
 
 -- Each cursor member emits up to 3 observation rows: email, platform_id, display_name.
--- Column set matches bootstrap_inputs_from_history macro output.
+-- Column set matches identity_input_from_history macro output.
 -- TEMPORARY: insight_tenant_id derived via sipHash128 until tenants table exists.
 
 WITH source AS (
@@ -35,7 +35,7 @@ WITH source AS (
 observations AS (
     -- email
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, '')))        AS insight_tenant_id,
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, ''))))        AS insight_tenant_id,
         toUUID('00000000-0000-0000-0000-000000000000')              AS insight_source_id,
         'cursor'                                                    AS insight_source_type,
         source_account_id,
@@ -51,7 +51,7 @@ observations AS (
 
     -- platform_id (cursor user ID)
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))),
         toUUID('00000000-0000-0000-0000-000000000000'),
         'cursor',
         source_account_id,
@@ -67,7 +67,7 @@ observations AS (
 
     -- display_name
     SELECT
-        UUIDNumToString(sipHash128(coalesce(tenant_id, ''))),
+        toUUID(UUIDNumToString(sipHash128(coalesce(tenant_id, '')))),
         toUUID('00000000-0000-0000-0000-000000000000'),
         'cursor',
         source_account_id,
