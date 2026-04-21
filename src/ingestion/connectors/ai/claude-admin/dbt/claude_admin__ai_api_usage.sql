@@ -2,7 +2,11 @@
 -- Joins with api_keys and workspaces for dimension name enrichment.
 -- person_id is always NULL at this stage: Admin API token usage is attributed
 -- to api_key_id / workspace_id, not to individual users.
-{{ config(materialized='incremental', unique_key='unique_id') }}
+{{ config(
+    materialized='incremental',
+    unique_key='unique_id',
+    tags=['claude-admin']
+) }}
 
 WITH usage AS (
     SELECT
