@@ -2,8 +2,8 @@
 # Migration: add an index on schema_migrations(applied_at).
 #
 # Purpose:
-#   Speed up "latest applied migration" queries — `SELECT MAX(applied_at)`
-#   or `ORDER BY applied_at DESC LIMIT 1` — used by operators when
+#   Speed up "latest applied migration" queries -- `SELECT MAX(applied_at)`
+#   or `ORDER BY applied_at DESC LIMIT 1` -- used by operators when
 #   debugging apply order.
 #
 # This is also the first SH-style migration in the project. It doubles

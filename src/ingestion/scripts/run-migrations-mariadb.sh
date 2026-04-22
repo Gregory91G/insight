@@ -6,7 +6,7 @@
 # in the schema_migrations table. version = filename without extension.
 #
 # SQL migrations are piped into the `mariadb` client inside the
-# Bitnami MariaDB pod via `kubectl exec -i` — no host-side mariadb/mysql
+# Bitnami MariaDB pod via `kubectl exec -i` -- no host-side mariadb/mysql
 # client required. SH migrations run locally with MARIADB_* env vars
 # exported; they may use the in-pod client the same way or any other
 # path to the database.
@@ -22,7 +22,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MIGRATIONS_DIR="$SCRIPT_DIR/migrations/mariadb"
 
-# ── MariaDB location (pod) and credentials ───────────────────────────────
+# -- MariaDB location (pod) and credentials -------------------------------
 export MARIADB_NAMESPACE="${MARIADB_NAMESPACE:-insight}"
 export MARIADB_POD="${MARIADB_POD:-insight-mariadb-0}"
 export MARIADB_CONTAINER="${MARIADB_CONTAINER:-mariadb}"
@@ -46,7 +46,7 @@ mariadb_exec() {
     --batch --skip-column-names "$@"
 }
 
-# ── Bootstrap schema_migrations ──────────────────────────────────────────
+# -- Bootstrap schema_migrations ------------------------------------------
 mariadb_exec <<'SQL'
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version     VARCHAR(255) NOT NULL PRIMARY KEY,
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 SQL
 
-# ── Load applied versions ────────────────────────────────────────────────
+# -- Load applied versions ------------------------------------------------
 APPLIED_FILE="$(mktemp)"
 trap 'rm -f "$APPLIED_FILE"' EXIT
 mariadb_exec -e "SELECT version FROM schema_migrations" > "$APPLIED_FILE"
@@ -69,9 +69,9 @@ record_applied() {
   mariadb_exec -e "INSERT INTO schema_migrations (version) VALUES ('$version')"
 }
 
-# ── Enumerate pending migrations ─────────────────────────────────────────
+# -- Enumerate pending migrations -----------------------------------------
 if [ ! -d "$MIGRATIONS_DIR" ]; then
-  echo "  No migrations directory ($MIGRATIONS_DIR) — nothing to do."
+  echo "  No migrations directory ($MIGRATIONS_DIR) -- nothing to do."
   exit 0
 fi
 
