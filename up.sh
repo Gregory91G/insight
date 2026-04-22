@@ -209,16 +209,23 @@ fi
 if [[ "$COMPONENT" == "all" || "$COMPONENT" == "app" || "$COMPONENT" == "infra" ]]; then
   # MariaDB -- required by Analytics API for metric definitions.
   # Credentials are pre-loaded into a Kubernetes Secret and handed to the
-  # Bitnami chart via auth.existingSecret (avoids passing the password on
-  # a helm --set command line -- which would also place it in Codacy's
-  # "hardcoded password" detector bucket and in kubectl events).
+  # Bitnami chart via auth.existingSecret (avoids passing secret values on
+  # any helm/kubectl command line).
   MARIADB_SECRET_NAME="insight-mariadb-auth"
-  kubectl create secret generic "$MARIADB_SECRET_NAME" \
-    --namespace "$NAMESPACE" \
-    --from-literal=mariadb-root-password="$MARIADB_ROOT_PASSWORD" \
-    --from-literal=mariadb-password="$MARIADB_PASSWORD" \
-    --from-literal=mariadb-replication-password="$MARIADB_PASSWORD" \
-    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  _b64() { printf '%s' "$1" | base64 | tr -d '\n'; }
+  kubectl apply -f - <<EOF >/dev/null
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${MARIADB_SECRET_NAME}
+  namespace: ${NAMESPACE}
+type: Opaque
+data:
+  mariadb-root-password: $(_b64 "$MARIADB_ROOT_PASSWORD")
+  mariadb-password: $(_b64 "$MARIADB_PASSWORD")
+  mariadb-replication-password: $(_b64 "$MARIADB_PASSWORD")
+EOF
+  unset -f _b64
 
   if ! helm status insight-mariadb -n "$NAMESPACE" &>/dev/null; then
     echo "=== Deploying MariaDB ==="
