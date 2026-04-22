@@ -34,7 +34,8 @@ for migration in "$SCRIPT_DIR/migrations"/*.sql; do
     | kubectl exec -i -n data deploy/clickhouse -- clickhouse-client --password "$CH_PASS" --multiquery
 done
 
-"$SCRIPT_DIR/run-migrations-mariadb.sh"
+# MariaDB migrations: each backend service now owns and applies its own
+# migrations at startup (SeaORM Migrator::up). See ADR-0006.
 
 echo "=== Registering connectors ==="
 "${TOOLKIT_DIR}/register.sh" --all

@@ -735,8 +735,7 @@ KUBECONFIG: `~/.kube/insight.kubeconfig`
 | `./up.sh` | Full stack: creates Kind cluster, deploys all services (ingestion + MariaDB + backend + frontend). Uses `.env.local` for configuration. Idempotent — safe to re-run. |
 | `./restart.sh` | Quick restart after WSL/Docker crash: restarts existing Kind cluster and scales pods back to 1. Falls back to full `./up.sh` + `./init.sh` if cluster is gone. Cleans up stale containers and stuck Helm releases. |
 | `./down.sh` | Graceful stop: scales all pods to 0, stops Kind container. Data preserved — `./restart.sh` brings everything back. |
-| `./init.sh` | Post-startup init: applies secrets, runs ClickHouse migrations, runs MariaDB migrations (via `run-migrations-mariadb.sh`), registers connectors, creates Airbyte connections. |
-| `./scripts/run-migrations-mariadb.sh` | MariaDB migration runner. Tracks applied migrations in `schema_migrations`, applies pending `*.sql` / `*.sh` files from `scripts/migrations/mariadb/`. See §4.4 and ADR-0004. |
+| `./init.sh` | Post-startup init: applies secrets, runs ClickHouse migrations, registers connectors, creates Airbyte connections. (MariaDB schema is applied per-service by each backend service's own SeaORM `Migrator` at startup — see §4.4 and [ADR-0006](ADR/0006-service-owned-migrations.md).) |
 | `src/ingestion/sync-all.sh` | Trigger Airbyte sync for all connections. Reads connection IDs from state, calls Airbyte API. Use after `./init.sh` to start first data load, or anytime to re-sync all sources. |
 
 **First-time setup**:
@@ -786,85 +785,51 @@ they diverge on bookkeeping because of different evolution patterns.
   VIEW` statements where idempotency guards are free, so a
   `schema_migrations` bookkeeping table is unnecessary
 
-#### 4.4.2 MariaDB migrations
+#### 4.4.2 MariaDB migrations — service-owned
 
-- **Location**: `src/ingestion/scripts/migrations/mariadb/` — single
-  flat directory containing both `*.sql` and `*.sh` files
-- **Naming**: `YYYYMMDDHHMMSS_<description>.{sql|sh}` — same timestamp
-  prefix rule, both kinds mixed in one directory to preserve
-  chronological interleaving of DDL and data migrations
-- **Runner**: `src/ingestion/scripts/run-migrations-mariadb.sh` —
-  stand-alone script, invoked automatically from `init.sh`, also
-  callable directly
-- **SQL execution**: pipes the file's contents through `kubectl -n
-  $MARIADB_NAMESPACE exec -i $MARIADB_POD -c $MARIADB_CONTAINER --
-  mariadb -u … -p… -D $MARIADB_DB --batch`. The MariaDB client lives
-  inside the Bitnami MariaDB pod — no host-side `mariadb`/`mysql`
-  client is required, no port-forward
-- **Bookkeeping**: `schema_migrations` table
-  (`version VARCHAR(255) PRIMARY KEY, applied_at DATETIME(3)`),
-  bootstrapped by the runner itself on first invocation. `version` =
-  filename without extension
-- **Execution rules**:
-  1. Load applied `version`s from `schema_migrations`
-  2. Enumerate `*.sql` + `*.sh` in the directory, sort lexicographically
-  3. For every pending file: `.sql` piped into the in-pod MariaDB
-     client via `kubectl exec -i`; `.sh` executed with `bash`. The
-     runner exports `MARIADB_URL`, `MARIADB_USER`, `MARIADB_PASSWORD`,
-     `MARIADB_HOST`, `MARIADB_PORT`, `MARIADB_DB`, plus
-     `MARIADB_NAMESPACE`, `MARIADB_POD`, `MARIADB_CONTAINER` (so SH
-     migrations can use the same `kubectl exec` path) to child
-     processes
-  4. On success, record the `version` in `schema_migrations`
-  5. On failure — abort immediately, do not record, do not continue
-- **Idempotency in two layers**: the runner skips by `schema_migrations`;
-  migration authors should still write DDL with `IF NOT EXISTS` and
-  data migrations with `INSERT IGNORE` / conditional `UPDATE` so that a
-  manually-dropped `schema_migrations` does not lead to a crash
-- **Rationale**: MariaDB will evolve with `ALTER`s and data backfills
-  where `IF NOT EXISTS` guards are awkward or impossible. A `version`-
-  tracked runner gives "what has been applied" a crisp answer
+There is **no global MariaDB migration mechanism** in this project.
+Each backend service that owns MariaDB tables carries its own
+migrations inside the service codebase and applies them at startup.
 
-See [ADR-0004](ADR/0004-mariadb-migration-runner.md) for the full
-decision rationale, alternatives considered, and contract for
-migration authors.
+- **analytics-api**: SeaORM `Migrator` at
+  `src/backend/services/analytics-api/src/migration/`; tracker table
+  `seaql_migrations` in database `analytics`.
+- **identity-resolution**: SeaORM `Migrator` at
+  `src/backend/services/identity/src/migration/`; tracker table
+  `seaql_migrations` in database `identity`.
+- **Future backend services**: follow the same pattern — own
+  `src/.../migration/`, own tracker table in own database.
 
-#### 4.4.3 Coexistence with `seaql_migrations`
+All services use the same SeaORM-Rust flavour with `Migrator::up(db,
+None)` invoked at startup. This provides:
 
-The same Bitnami MariaDB Helm release hosts **two separate databases**
-with **two independent migration trackers**:
+- **Co-location**: schema changes ship with the Rust code that depends
+  on them; a service's DDL and its entity definitions never drift.
+- **Database isolation**: each service lives in its own MariaDB
+  database; cross-service table access is an explicit architectural
+  decision, not an accident of shared-schema layout.
+- **No ordering coupling between services**: no single `init.sh` step
+  must run before any service starts.
 
-| Database | Owner | Tracker | Tables |
-|---|---|---|---|
-| `analytics` | `analytics-api` backend (SeaORM) | `seaql_migrations` (in `analytics`) | `metrics`, `thresholds`, `table_columns`, seed rows |
-| `identity` | identity-resolution / person / org-chart / ingestion (our runner) | `schema_migrations` (in `identity`) | `persons`, future identity-domain tables |
+Infra responsibility (in `up.sh`) stays minimal: provision the MariaDB
+instance, create the per-service databases (e.g. `CREATE DATABASE
+IF NOT EXISTS identity`), grant the app user access. **Schema inside
+each database** is the owning service's job.
 
-The two trackers live in **different databases** on the same MariaDB
-instance and never reference each other. The `identity` database is
-created in `up.sh` immediately after the MariaDB chart is installed
-(`CREATE DATABASE IF NOT EXISTS identity` + `GRANT ALL PRIVILEGES ON
-identity.*` to the app user). `version` namespaces are additionally
-distinct by construction (SeaORM: `m{YYYYMMDD}_{seq}_{name}`, our
-runner: `{YYYYMMDDHHMMSS}_{name}`). A new MariaDB table is authored
-under the tracker owned by the **domain that specifies the table**.
+See [ADR-0006](ADR/0006-service-owned-migrations.md) for the decision
+record.
 
-See [ADR-0005](ADR/0005-coexist-with-seaql-migrations.md) for the
-full ownership split, database layout, trade-offs, and lifecycle
-ordering rules.
+#### 4.4.3 One-shot data seeds
 
-#### 4.4.4 Migrations vs. one-shot data seeds
+Operator-triggered data bootstraps (e.g. the identity-resolution
+`persons` seed reading from ClickHouse `identity.identity_inputs`) are
+not schema migrations and do not belong under the service's SeaORM
+`Migrator`. They live alongside the owning service as stand-alone
+scripts and are invoked explicitly by operators after migrations run
+and the underlying data source is populated.
 
-Migrations in `migrations/mariadb/` are **permanent history**: each file
-runs once per environment, is preserved in `schema_migrations` forever,
-and is never edited after it has been applied in any shared environment.
-
-One-shot data seeds (e.g. `scripts/seed-persons.sh` —
-see the identity-resolution DESIGN §Initial seed) are a different
-category of artifact: operator-triggered data bootstrap from another
-store, re-runnable via the seed's own idempotency (deterministic keys +
-`INSERT IGNORE`). They live at the top of `scripts/`, not under
-`migrations/`, and are deliberately excluded from `schema_migrations`
-bookkeeping.
+Currently:
+- `src/backend/services/identity/seed/seed-persons.sh` + `seed-persons-from-identity-input.py` — identity-resolution's one-shot seed.
 
 ## 5. Additional Context
 

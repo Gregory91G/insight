@@ -5,18 +5,20 @@
 # assigns deterministic person_id per (tenant, email), INSERT IGNOREs
 # every observation into persons.
 #
-# This script does NOT apply DDL. The persons table is created by the
-# MariaDB migration runner (run-migrations-mariadb.sh -> migrations/mariadb/).
-# See ADR-0002 (seed idempotency) and ADR-0004 (migration runner).
+# This script does NOT apply DDL. The `persons` table schema is owned
+# by the identity-resolution Rust service and applied by its SeaORM
+# Migrator at startup (see ADR-0002 for seed idempotency and ADR-0006
+# for the service-owned-migrations policy).
 #
 # Prerequisites:
 #   - Cluster running, ClickHouse + MariaDB healthy
 #   - identity_inputs dbt view populated (dbt run --select +identity_inputs)
-#   - persons migration applied (./scripts/run-migrations-mariadb.sh
-#     or ./scripts/init.sh)
+#   - identity-resolution service has started at least once (its
+#     initContainer applies the persons migration), OR run:
+#       identity-resolution migrate
 #
 # Usage:
-#   cd src/ingestion && ./scripts/seed-persons.sh
+#   ./src/backend/services/identity/seed/seed-persons.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

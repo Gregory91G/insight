@@ -181,7 +181,7 @@ Deterministic matching first (exact email, exact HR ID). Fuzzy matching is opt-i
 
 Analytical tables (`identity_inputs`, `aliases`, `match_rules`, `unmapped`, `conflicts`, `merge_audits`, `alias_gdpr_deleted`) are stored in ClickHouse — optimised for read-heavy analytical queries; merge/split atomicity is achieved through idempotent snapshot-based operations, not ACID transactions.
 
-The identity-attribute history table (`persons`) is stored in MariaDB (see §3.7) — a CRUD-friendly transactional store is the right fit for row-level operator edits, audit trails, and the backend APIs that read it. Schema is maintained by the MariaDB migration runner (see ingestion DESIGN.md §4.4 and ADR-0004).
+The identity-attribute history table (`persons`) is stored in MariaDB (see §3.7) — a CRUD-friendly transactional store is the right fit for row-level operator edits, audit trails, and the backend APIs that read it. Schema is owned and applied by the `identity-resolution` Rust service itself via its embedded SeaORM `Migrator` (see [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)).
 
 
 #### PR #55 Naming Conventions
@@ -736,9 +736,9 @@ The aggregated view is `identity_inputs` (plural, matching table-name convention
 
 Field-level identity attribute history for persons, stored in MariaDB. Each row represents one observed field value for a person at a specific point in time — an SCD-style append-only log. Unlike `aliases` (resolved alias→person mapping in ClickHouse), `persons` captures the **history of field changes** that contribute to a person's identity: `email`, `display_name`, `platform_id`, `employee_id`, etc. This is the canonical CRUD-accessible person attribute store used by backend services.
 
-**Database**: MariaDB, database `identity` (dedicated to identity-resolution-domain tables). Analytics-api owns its own `analytics` database on the same MariaDB instance — see [ADR-0005](../../ingestion/specs/ADR/0005-coexist-with-seaql-migrations.md) §2 for the database layout.
+**Database**: MariaDB, database `identity` (dedicated to identity-resolution-domain tables). Analytics-api owns its own `analytics` database on the same MariaDB instance. Each backend service owns and applies its own schema — see [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md).
 
-**DDL**: `src/ingestion/scripts/migrations/mariadb/20260421000000_persons.sql`
+**DDL**: `src/backend/services/identity/src/migration/m20260421_000001_persons.rs` (SeaORM migration, raw SQL body)
 
 ##### Columns
 
@@ -780,24 +780,28 @@ Row 120 supersedes row 5 as the current `display_name` for person `p-1001` (late
 
 ##### Initial seed (idempotent upsert from `identity_inputs`)
 
-**Scripts** — two-file split by separation of concerns:
+**Scripts** — two-file split by separation of concerns, colocated with the identity-resolution service at `src/backend/services/identity/seed/`:
 
 | File | Role | Responsibilities |
 |---|---|---|
-| `src/ingestion/scripts/seed-persons.sh` | Environment orchestrator (bash) | Resolve ClickHouse password from the `clickhouse-credentials` K8s secret (fallback to env); compute `MARIADB_URL` from local-cluster defaults; start `kubectl port-forward svc/insight-mariadb 3306:3306` if port 3306 is not open; `pip install pymysql` if missing; invoke the Python script. Does **not** apply DDL — that is the MariaDB migration runner's responsibility. |
-| `src/ingestion/scripts/seed-persons-from-identity-input.py` | Pure data transform (Python) | HTTP-read `identity.identity_inputs` from ClickHouse (`FORMAT JSONEachRow`); group observations by source-account; assign deterministic `person_id`; `INSERT IGNORE` every observation into `persons`; report added / skipped / total counts. |
+| `seed-persons.sh` | Environment orchestrator (bash) | Resolve ClickHouse password from the `clickhouse-credentials` K8s secret (fallback to env); compute `MARIADB_URL` from local-cluster defaults (URL-encoded credentials); start `kubectl port-forward svc/insight-mariadb 3306:3306` if port 3306 is not open; `pip install pymysql` if missing; invoke the Python script. Does **not** apply DDL. |
+| `seed-persons-from-identity-input.py` | Pure data transform (Python) | HTTP-read `identity.identity_inputs` from ClickHouse (`FORMAT JSONEachRow`) with a bounded timeout; group observations by source-account; assign deterministic `person_id`; `INSERT IGNORE` every observation into `persons`; report added / skipped / total counts. |
 
 **Rationale for the split**:
 - Bash is the right tool for kubectl, port-forwards, and secret lookup. Python is the right tool for typed grouping, UUIDv5 hashing, dedup, and parameterised DB writes.
-- The Python script is **independently runnable** — set `CLICKHOUSE_*` and `MARIADB_URL` env vars, ensure the DDL is already applied (via the migration runner), and run `python3 seed-persons-from-identity-input.py`. Used by CI, by non-Kind environments, and for dry runs.
+- The Python script is **independently runnable** — set `CLICKHOUSE_*` and `MARIADB_URL` env vars, ensure the DDL is already applied (by the identity-resolution service startup / `migrate` subcommand), and run `python3 seed-persons-from-identity-input.py`. Used by CI, by non-Kind environments, and for dry runs.
 - The Python script is **testable in isolation** — the ClickHouse HTTP call and the pymysql connection are the only external dependencies and are trivially mockable; bash is not.
 
-**Schema ownership**: the `persons` table DDL lives at
-`src/ingestion/scripts/migrations/mariadb/20260421000000_persons.sql`
-and is applied by the MariaDB migration runner (`run-migrations-mariadb.sh`,
-invoked automatically from `init.sh`). See [ADR-0004](../../../ingestion/specs/ADR/0004-mariadb-migration-runner.md)
-for the migration mechanism. The seed scripts here operate on the already-
-created table; they never issue `CREATE`, `ALTER`, `TRUNCATE`, or `DELETE`.
+**Schema ownership**: the `persons` table DDL lives inside the
+identity-resolution Rust service at
+`src/backend/services/identity/src/migration/m20260421_000001_persons.rs`
+and is applied by the service's own SeaORM `Migrator` at startup
+(a helm `initContainer` also runs `identity-resolution migrate`
+before the main container starts). See
+[ADR-0006](../../../ingestion/specs/ADR/0006-service-owned-migrations.md)
+for the service-owned-migrations policy. The seed scripts here
+operate on the already-created table; they never issue `CREATE`,
+`ALTER`, `TRUNCATE`, or `DELETE`.
 
 **Process** (data flow executed by the Python script):
 
@@ -814,10 +818,11 @@ created table; they never issue `CREATE`, `ALTER`, `TRUNCATE`, or `DELETE`.
 **Prerequisites and ordering** (end-to-end bootstrap):
 
 1. Connector secrets applied (`./secrets/apply.sh`).
-2. `./init.sh` — runs ClickHouse migrations, runs MariaDB migrations (creates `persons` table), registers connectors, creates connections.
-3. Airbyte sync produced Bronze data (`./sync-all.sh` + wait).
-4. dbt models run to populate `identity.identity_inputs` (`dbt run --select +identity_inputs`).
-5. Seed run (`./scripts/seed-persons.sh`) — invokes the Python seed.
+2. `./up.sh` — provisions MariaDB + the `identity` database + grants, builds and deploys the identity-resolution service; the service's initContainer applies pending migrations (including the `persons` table).
+3. `./init.sh` — runs ClickHouse migrations, registers connectors, creates connections.
+4. Airbyte sync produced Bronze data (`./sync-all.sh` + wait).
+5. dbt models run to populate `identity.identity_inputs` (`dbt run --select +identity_inputs`).
+6. Seed run (`./src/backend/services/identity/seed/seed-persons.sh`) — invokes the Python seed.
 
 ---
 

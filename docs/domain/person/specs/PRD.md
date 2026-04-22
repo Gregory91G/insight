@@ -129,7 +129,7 @@ Insight connects to 10+ external platforms, each contributing partial person dat
 
 ### 3.1 Module-Specific Environment Constraints
 
-- **Storage**: The Person-domain analytical tables (golden-record projection, `person_availability`, `person_conflicts`) reside in ClickHouse. The MariaDB-backed `persons` identity-attribute history table read by this domain is owned and maintained by the Identity-Resolution domain (see identity-resolution DESIGN §3.7 and ADR-0004).
+- **Storage**: The Person-domain analytical tables (golden-record projection, `person_availability`, `person_conflicts`) reside in ClickHouse. The MariaDB-backed `persons` identity-attribute history table read by this domain is owned and maintained by the Identity-Resolution domain (see identity-resolution DESIGN §3.7 and ingestion [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)).
 - **Shared input**: Person-attribute observations originate from two sources — the `identity_inputs` ClickHouse table (connector-sourced) and the MariaDB `persons` history table (operator edits), both owned by the Identity Resolution domain.
 - **SCD history**: Historical versions of person records are managed by dbt macros (SCD Type 2 / Type 3). This domain defines the current-state table; history schemas are out of scope.
 - **Naming**: All tables and columns follow the shared glossary conventions.

@@ -149,7 +149,7 @@ The Person domain owns person records and nothing else. Alias-to-person mapping 
 
 - [ ] `p2` - **ID**: `cpt-person-constraint-analytical-ch`
 
-The analytical tables owned by the Person domain (golden-record projection, `person_availability`, `person_conflicts`) reside in ClickHouse. The MariaDB-backed `persons` identity-attribute history table read by this domain is owned by the Identity-Resolution domain (see identity-resolution DESIGN §3.7 and ADR-0004); the Person domain reads from it but does not manage its schema.
+The analytical tables owned by the Person domain (golden-record projection, `person_availability`, `person_conflicts`) reside in ClickHouse. The MariaDB-backed `persons` identity-attribute history table read by this domain is owned by the Identity-Resolution domain (see identity-resolution DESIGN §3.7 and ingestion [ADR-0006](../../ingestion/specs/ADR/0006-service-owned-migrations.md)); the Person domain reads from it but does not manage its schema.
 
 
 #### PR #55 Naming Conventions

@@ -12,19 +12,19 @@ See ADR-0002 (deterministic-person-id-for-seed).
 
 Prerequisites:
   - ClickHouse identity_inputs view exists (run dbt first)
-  - MariaDB persons table exists (applied by the migration runner:
-    run ./scripts/run-migrations-mariadb.sh or ./init.sh)
+  - MariaDB persons table exists (the identity-resolution service
+    applies it at startup via its own SeaORM Migrator; see ADR-0006)
   - Environment: CLICKHOUSE_URL, CLICKHOUSE_USER, CLICKHOUSE_PASSWORD
-  - Environment: MARIADB_URL (mysql://user:pass@host:port/db)
+  - Environment: MARIADB_URL (mysql://user:pass@host:port/identity)
 
 Usage:
   # From host with port-forwards:
   export CLICKHOUSE_URL=http://localhost:30123
   export CLICKHOUSE_USER=default
   export CLICKHOUSE_PASSWORD=<from secret>
-  export MARIADB_URL=mysql://insight:insight-pass@localhost:3306/analytics
+  export MARIADB_URL=mysql://insight:insight-pass@localhost:3306/identity
 
-  python3 scripts/seed-persons-from-identity-input.py
+  python3 src/backend/services/identity/seed/seed-persons-from-identity-input.py
 
   # Or via kubectl port-forward for MariaDB:
   kubectl -n insight port-forward svc/insight-mariadb 3306:3306 &
@@ -39,7 +39,9 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 
-# -- Schema constraints (mirror migrations/mariadb/20260421000000_persons.sql)
+# -- Schema constraints (mirror src/backend/services/identity/src/migration/
+# m20260421_000001_persons.rs -- the authoritative DDL is now in the Rust
+# service's SeaORM Migrator; see ADR-0006)
 # VARCHAR(512) for alias_value -- longer values are rejected rather than
 # silently truncated by INSERT IGNORE.
 MAX_ALIAS_VALUE_LEN = 512
