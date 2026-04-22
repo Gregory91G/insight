@@ -745,15 +745,17 @@ Field-level identity attribute history for persons, stored in MariaDB. Each row 
 | Column | Type | Description |
 |---|---|---|
 | `id` | `BIGINT UNSIGNED AUTO_INCREMENT` | PK |
-| `alias_type` | `VARCHAR(50) CHARACTER SET ascii NOT NULL` | Field kind — one of `email`, `display_name`, `platform_id`, `employee_id` (extensible) |
-| `insight_source_type` | `VARCHAR(100) CHARACTER SET ascii NOT NULL` | Source system: `bamboohr`, `zoom`, `cursor`, `claude_admin`, `gitlab`, etc. |
-| `insight_source_id` | `CHAR(36) CHARACTER SET ascii NOT NULL` | Connector instance UUID (temporary: sipHash128 from Bronze string `source_id` until `sources` table exists — see REC-IR-04) |
-| `insight_tenant_id` | `CHAR(36) CHARACTER SET ascii NOT NULL` | Tenant UUID (temporary: sipHash128 from Bronze string `tenant_id` until `tenants` table exists — see REC-IR-04) |
-| `alias_value` | `VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL` | Field value — email address, display name, platform ID, etc. `utf8mb4_bin` ensures case/diacritic-sensitive uniqueness at the UNIQUE key level |
-| `person_id` | `CHAR(36) CHARACTER SET ascii NOT NULL` | Person UUID — groups all field observations that belong to one person |
-| `author_person_id` | `CHAR(36) CHARACTER SET ascii NOT NULL` | Person UUID of who/what made this change (for initial seed: equals `person_id` — the record is self-authored by the synthetic person) |
+| `alias_type` | `VARCHAR(50) NOT NULL` | Field kind — one of `email`, `display_name`, `platform_id`, `employee_id` (extensible) |
+| `insight_source_type` | `VARCHAR(100) NOT NULL` | Source system: `bamboohr`, `zoom`, `cursor`, `claude_admin`, `gitlab`, etc. |
+| `insight_source_id` | `BINARY(16) NOT NULL` | Connector instance UUID (temporary: sipHash128 from Bronze string `source_id` until `sources` table exists — see REC-IR-04) |
+| `insight_tenant_id` | `BINARY(16) NOT NULL` | Tenant UUID (temporary: sipHash128 from Bronze string `tenant_id` until `tenants` table exists — see REC-IR-04) |
+| `alias_value` | `VARCHAR(512) COLLATE utf8mb4_bin NOT NULL` | Field value — email address, display name, platform ID, etc. `utf8mb4_bin` ensures case/diacritic-sensitive uniqueness at the UNIQUE key level |
+| `person_id` | `BINARY(16) NOT NULL` | Person UUID — groups all field observations that belong to one person |
+| `author_person_id` | `BINARY(16) NOT NULL` | Person UUID of who/what made this change (for initial seed: equals `person_id` — the record is self-authored by the synthetic person) |
 | `reason` | `TEXT NOT NULL DEFAULT ''` | Optional change-reason comment (empty for initial seed) |
-| `created_at` | `DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)` | When this record was inserted |
+| `created_at` | `TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP` | When this record was inserted. MariaDB stores `TIMESTAMP` internally as UTC and converts to session timezone on read |
+
+**UUID representation**: all UUID columns are stored as `BINARY(16)` (SeaORM `.uuid()` default on MariaDB, matches `analytics-api` convention). Python clients must pass **`uuid.UUID.bytes`** (the 16-byte raw form) — passing the `uuid.UUID` object directly makes the driver fall back to `str(UUID)` (36 chars) which `BINARY(16)` silently truncates to ASCII, corrupting the column. For human-readable reads in SQL use `CAST(col AS UUID)` (MariaDB 10.7+) or build the textual form from `HEX(col)`. Note: MySQL 8's `BIN_TO_UUID()` is **not** available in MariaDB.
 
 **Primary key**: `id` (auto-increment integer — MariaDB convention for append-only observation history; stable row identifier for operator references).
 

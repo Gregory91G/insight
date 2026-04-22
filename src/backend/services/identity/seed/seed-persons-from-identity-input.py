@@ -38,6 +38,17 @@ import urllib.request
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
+from urllib.parse import unquote, urlparse
+
+# MariaDB driver -- pymysql preferred, mysql.connector fallback. For
+# BINARY(16) columns we pass `uuid.UUID.bytes` (16 raw bytes) rather than
+# the UUID object itself: both drivers would otherwise fall back to
+# str(UUID) -- a 36-char text form -- which BINARY(16) silently
+# truncates to the first 16 ASCII bytes, corrupting the column.
+try:
+    import pymysql as _mysql_driver  # type: ignore[import-not-found]
+except ImportError:
+    import mysql.connector as _mysql_driver  # type: ignore[import-not-found,no-redef]
 
 # -- Schema constraints (mirror src/backend/services/identity/src/migration/
 # m20260421_000001_persons.rs -- the authoritative DDL is now in the Rust
@@ -81,12 +92,10 @@ def get_mariadb_conn():
     mariadb_url = os.environ.get(
         "MARIADB_URL", "mysql://insight:insight-pass@localhost:3306/identity"
     )
-    # Parse mysql://user:pass@host:port/db
     # seed-persons.sh URL-encodes user/password via urllib.parse.quote() so
     # that passwords containing ':', '@', '/', or '%' do not break URL
-    # parsing. urlparse returns the values still-encoded -- we unquote
-    # here before handing them to the driver.
-    from urllib.parse import urlparse, unquote
+    # parsing. urlparse returns the values still-encoded -- we unquote here
+    # before handing them to the driver.
     parsed = urlparse(mariadb_url)
     user = unquote(parsed.username) if parsed.username else "insight"
     password = unquote(parsed.password) if parsed.password else ""
@@ -94,18 +103,10 @@ def get_mariadb_conn():
     port = parsed.port or 3306
     database = parsed.path.lstrip("/") or "identity"
 
-    try:
-        import pymysql
-        return pymysql.connect(
-            host=host, port=port, user=user, password=password,
-            database=database, charset="utf8mb4", autocommit=False,
-        )
-    except ImportError:
-        import mysql.connector
-        return mysql.connector.connect(
-            host=host, port=port, user=user, password=password,
-            database=database, charset="utf8mb4", autocommit=False,
-        )
+    return _mysql_driver.connect(
+        host=host, port=port, user=user, password=password,
+        database=database, charset="utf8mb4", autocommit=False,
+    )
 
 
 # -- Main -----------------------------------------------------------------
@@ -158,13 +159,13 @@ def main():
         accounts[key].append(r)
 
     # 3. Assign deterministic person_id per unique email (within tenant).
-    #    Using UUIDv5 with a project-specific namespace: same (tenant, email)
-    #    always produces the same UUID, so re-running the seed never mints
-    #    a new person_id for an existing person. See ADR-0002.
-    PERSON_NAMESPACE = uuid.UUID("6c7c3e2e-2f6b-5f6e-9b9d-6f8a3c2e1b4d")
-
-    email_to_person: dict[tuple[str, str], str] = {}
-    account_person: dict[tuple, str] = {}
+    #    UUIDv5 over RFC 4122 NAMESPACE_URL with a self-documenting input
+    #    string -- the same (tenant, email) pair always produces the same
+    #    UUID, so re-running the seed never mints a new person_id for an
+    #    existing person. Matches the NAMESPACE_URL + string-input pattern
+    #    used by oidc-authn-plugin. See ADR-0002.
+    email_to_person: dict[tuple[str, str], uuid.UUID] = {}
+    account_person: dict[tuple, uuid.UUID] = {}
 
     for key, obs_list in accounts.items():
         tenant_id = key[0]
@@ -178,8 +179,8 @@ def main():
 
         email_key = (tenant_id, email)
         if email_key not in email_to_person:
-            email_to_person[email_key] = str(
-                uuid.uuid5(PERSON_NAMESPACE, f"{tenant_id}:{email}")
+            email_to_person[email_key] = uuid.uuid5(
+                uuid.NAMESPACE_URL, f"insight:person:{tenant_id}:{email}"
             )
         account_person[key] = email_to_person[email_key]
 
@@ -195,9 +196,20 @@ def main():
     oversized = 0
     for key, obs_list in accounts.items():
         person_id = account_person.get(key)
-        if not person_id:
+        if person_id is None:
             continue  # skipped (no email)
-        tenant_id, source_type, source_id, _ = key
+        tenant_str, source_type, source_id_str, _ = key
+        # tenant_id and insight_source_id come from identity.identity_inputs,
+        # where ClickHouse types both columns as UUID -- toString() on the
+        # wire always yields a valid UUID string. An invalid value here is
+        # an ingestion-pipeline bug; fail loudly with uuid.UUID's native
+        # ValueError rather than silently dropping the observation.
+        # Bind as 16-byte raw (UUID.bytes) so BINARY(16) gets the real
+        # binary value, not the 36-char text form truncated to 16 ASCII
+        # bytes.
+        tenant_bin = uuid.UUID(tenant_str).bytes
+        source_bin = uuid.UUID(source_id_str).bytes
+        person_bin = person_id.bytes
         for obs in obs_list:
             alias_value = obs["alias_value"]
             # VARCHAR(512) utf8mb4 caps at 512 *characters* (up to ~2048
@@ -211,11 +223,11 @@ def main():
             insert_rows.append((
                 obs["alias_type"],
                 source_type,
-                source_id,
-                tenant_id,
+                source_bin,
+                tenant_bin,
                 alias_value,
-                person_id,
-                person_id,  # author = self for initial seed
+                person_bin,
+                person_bin,  # author = self for initial seed
                 "",          # reason
                 now,
             ))
