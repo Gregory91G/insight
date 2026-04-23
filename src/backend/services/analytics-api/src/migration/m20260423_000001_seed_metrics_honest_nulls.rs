@@ -1,16 +1,17 @@
-//! Honest-null patch for TEAM_BULLET_AI (UUID …06) and IC_BULLET_AI
+//! Honest-null patch for `TEAM_BULLET_AI` (UUID …06) and `IC_BULLET_AI`
 //! (UUID …13).
 //!
 //! The squashed `m20260422_000001_seed_metrics` seeds inline the bullet-rows
 //! aggregation logic instead of reading from the pre-aggregated `insight.*_stats`
 //! views. Those inline queries hardcode `toFloat64(0)` for median/min and
-//! `toFloat64(count())` for max in the active-family metrics (active_ai_members,
-//! cursor_active, cc_active, codex_active). When the upstream `ai_bullet_rows`
-//! view emits NULL for unsourced metrics (Claude Code / Codex / ChatGPT /
-//! Claude.ai — see CH migration `20260423120000_bullet-views-honest-nulls.sql`),
-//! those hardcoded fallbacks still return `median=0, min=0, max=teamsize`,
-//! producing a "0 out of N" bullet instead of the ComingSoon placeholder the
-//! FE renders when `range_min/max` are NULL.
+//! `toFloat64(count())` for max in the active-family metrics
+//! (`active_ai_members`, `cursor_active`, `cc_active`, `codex_active`). When
+//! the upstream `ai_bullet_rows` view emits NULL for unsourced metrics
+//! (Claude Code / Codex / `ChatGPT` / Claude.ai — see CH migration
+//! `20260423120000_bullet-views-honest-nulls.sql`), those hardcoded fallbacks
+//! still return `median=0, min=0, max=teamsize`, producing a "0 out of N"
+//! bullet instead of the `ComingSoon` placeholder the FE renders when
+//! `range_min`/`range_max` are NULL.
 //!
 //! This migration wraps the hardcodes in `if(count(v_period) = 0, NULL, …)`
 //! so the synthetic distribution collapses to NULL when the metric has no
